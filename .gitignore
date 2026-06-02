@@ -1,0 +1,31 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# PyInstaller build files
+build/
+dist/
+*.spec
+build.ps1
+
+# SQLite Database
+*.db
+timesheets.db
+
+# Generated Word Timesheets
+timesheet_*.docx
+sample_timesheet.docx
+~$*.docx
+*.docx
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Editor / OS settings
+.idea/
+.vscode/
+Thumbs.db
+Desktop.ini
