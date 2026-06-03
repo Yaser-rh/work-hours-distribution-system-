@@ -6,10 +6,10 @@ from datetime import datetime
 from typing import List, Dict, Any, Optional
 
 import tkinter as tk
-from tkinter import ttk
 from tkinter import messagebox
 from tkinter import filedialog
-from tkinter.scrolledtext import ScrolledText
+from tkinter import ttk
+import customtkinter as ctk
 
 import db.models as models
 import db.database as database
@@ -17,50 +17,91 @@ import solver.sat_solver as sat_solver
 import exporter.docx_exporter as docx_exporter
 
 class TimesheetAppGUI:
-    def __init__(self, root: tk.Tk):
+    def __init__(self, root: ctk.CTk):
         self.root = root
         self.root.title("Timesheet & Driver Shift Distribution System")
-        self.root.geometry("1100x750")
-        self.root.minsize(1000, 650)
+        self.root.geometry("1150x800")
+        self.root.minsize(1050, 700)
         
-        # Apply professional TTK theme and styling
+        # Apply standard system style for Treeview styling
         self.style = ttk.Style()
         self.style.theme_use("clam")
-        
-        # Color palette definition
-        self.style.configure(".", font=("Segoe UI", 10))
-        self.style.configure("TLabel", foreground="#333333")
-        self.style.configure("Header.TLabel", font=("Segoe UI", 16, "bold"), foreground="#1a365d")
-        self.style.configure("Sub.TLabel", font=("Segoe UI", 9, "italic"), foreground="#666666")
-        self.style.configure("Accent.TButton", font=("Segoe UI", 10, "bold"), background="#1a365d", foreground="white")
-        self.style.map("Accent.TButton", background=[("active", "#2b6cb0")])
-        self.style.configure("Treeview.Heading", font=("Segoe UI", 10, "bold"))
         
         # Initialize Database connection
         database.initialize_database()
         
-        # Top Menu Bar
+        # Build UI layout
+        self.setup_header()
         self.setup_menu()
-        
-        # Main Layout
-        self.notebook = ttk.Notebook(self.root)
-        self.notebook.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
-        
-        # Build Tabs
-        self.setup_cities_tab()
-        self.setup_drivers_tab()
-        self.setup_timesheets_tab()
-        
-        # Setup Analytics tab
-        from ui.analytics_tab import AnalyticsTab
-        self.analytics_tab = AnalyticsTab(self.notebook, self)
-        self.notebook.add(self.analytics_tab, text="Analytics")
-        self.notebook.bind("<<NotebookTabChanged>>", self.on_tab_changed)
-        
-        # Logs Section (Collapsible ScrolledText at the bottom)
+        self.setup_tabs()
         self.setup_log_panel()
         
+        # Initialize Treeview styling based on the theme
+        self.update_treeview_styles()
+        
         self.write_log("[System] Initialized successfully. Ready.")
+
+    def setup_header(self):
+        """Creates a header bar with application title and dark/light mode toggle."""
+        header_frame = ctk.CTkFrame(self.root, fg_color="transparent")
+        header_frame.pack(fill=tk.X, padx=15, pady=(15, 5))
+        
+        ctk.CTkLabel(
+            header_frame, 
+            text="Driver Shift & Timesheet Distribution", 
+            font=("Segoe UI", 20, "bold")
+        ).pack(side=tk.LEFT)
+        
+        self.theme_switch = ctk.CTkSwitch(
+            header_frame, 
+            text="Dark Mode", 
+            command=self.toggle_theme,
+            font=("Segoe UI", 11, "bold")
+        )
+        self.theme_switch.pack(side=tk.RIGHT, padx=10)
+        
+        # Default theme switch position based on system appearance
+        if ctk.get_appearance_mode() == "Dark":
+            self.theme_switch.select()
+
+    def toggle_theme(self):
+        """Toggles application appearance between Dark and Light mode."""
+        if self.theme_switch.get() == 1:
+            ctk.set_appearance_mode("Dark")
+        else:
+            ctk.set_appearance_mode("Light")
+            
+        self.update_treeview_styles()
+        
+        if hasattr(self, 'analytics_tab'):
+            self.analytics_tab.refresh_selectors()
+
+    def update_treeview_styles(self):
+        """Styles the native TTK Treeview widgets dynamically to fit CustomTkinter theme."""
+        is_dark = (ctk.get_appearance_mode() == "Dark")
+        
+        bg = "#2b2b2b" if is_dark else "#ffffff"
+        fg = "#ffffff" if is_dark else "#000000"
+        field_bg = "#2b2b2b" if is_dark else "#ffffff"
+        selected_bg = "#1f538d" if is_dark else "#3a7ebf"
+        heading_bg = "#212121" if is_dark else "#eaeaea"
+        heading_fg = "#ffffff" if is_dark else "#000000"
+        
+        self.style.configure("Treeview", 
+                             background=bg, 
+                             foreground=fg, 
+                             fieldbackground=field_bg, 
+                             rowheight=26,
+                             font=("Segoe UI", 10),
+                             borderwidth=0,
+                             relief="flat")
+        self.style.configure("Treeview.Heading", 
+                             background=heading_bg, 
+                             foreground=heading_fg, 
+                             font=("Segoe UI", 10, "bold"),
+                             borderwidth=1,
+                             relief="flat")
+        self.style.map("Treeview", background=[("selected", selected_bg)])
 
     # ==============================================================================
     # Top Menu & Logs Panel
@@ -76,21 +117,61 @@ class TimesheetAppGUI:
         self.root.config(menu=menubar)
 
     def setup_log_panel(self):
-        # Collapsible Log Frame
-        log_frame = ttk.LabelFrame(self.root, text=" Solver Calculations Logs ", padding=5)
-        log_frame.pack(fill=tk.X, side=tk.BOTTOM, padx=10, pady=(0, 10))
+        """Setup a collapsible log console at the bottom."""
+        self.log_container = ctk.CTkFrame(self.root, corner_radius=12)
+        self.log_container.pack(fill=tk.X, side=tk.BOTTOM, padx=15, pady=(0, 15))
         
-        self.log_txt = ScrolledText(log_frame, height=5, bg="#fafafa", fg="#333333", font=("Courier New", 9))
+        header = ctk.CTkFrame(self.log_container, fg_color="transparent", height=32)
+        header.pack(fill=tk.X, padx=15, pady=6)
+        
+        ctk.CTkLabel(
+            header, 
+            text="Solver Calculation Logs", 
+            font=("Segoe UI", 12, "bold")
+        ).pack(side=tk.LEFT)
+        
+        self.btn_toggle_logs = ctk.CTkButton(
+            header, 
+            text="Collapse Logs", 
+            width=110, 
+            height=24, 
+            fg_color="#4a5568", 
+            hover_color="#2d3748", 
+            font=("Segoe UI", 11),
+            command=self.toggle_log_panel
+        )
+        self.btn_toggle_logs.pack(side=tk.RIGHT)
+        
+        self.log_inner_frame = ctk.CTkFrame(self.log_container, fg_color="transparent")
+        self.log_inner_frame.pack(fill=tk.BOTH, expand=True, padx=15, pady=(0, 10))
+        
+        self.log_txt = ctk.CTkTextbox(
+            self.log_inner_frame, 
+            height=90, 
+            font=("Courier New", 12)
+        )
         self.log_txt.pack(fill=tk.BOTH, expand=True)
-        self.log_txt.config(state=tk.DISABLED)
+        self.log_txt.configure(state=tk.DISABLED)
+        self.logs_collapsed = False
+
+    def toggle_log_panel(self):
+        """Collapses or expands the logs panel to save screen space."""
+        if self.logs_collapsed:
+            self.log_inner_frame.pack(fill=tk.BOTH, expand=True, padx=15, pady=(0, 10))
+            self.btn_toggle_logs.configure(text="Collapse Logs")
+            self.logs_collapsed = False
+        else:
+            self.log_inner_frame.pack_forget()
+            self.btn_toggle_logs.configure(text="Expand Logs")
+            self.logs_collapsed = True
 
     def write_log(self, text: str):
         """Thread-safe logging into bottom console."""
         def append_log():
-            self.log_txt.config(state=tk.NORMAL)
+            self.log_txt.configure(state=tk.NORMAL)
             self.log_txt.insert(tk.END, text + "\n")
             self.log_txt.see(tk.END)
-            self.log_txt.config(state=tk.DISABLED)
+            self.log_txt.configure(state=tk.DISABLED)
         self.root.after(0, append_log)
 
     def menu_backup(self):
@@ -138,47 +219,100 @@ class TimesheetAppGUI:
         if hasattr(self, 'analytics_tab'):
             self.analytics_tab.refresh_selectors()
 
-    def on_tab_changed(self, event):
+    def on_tab_changed(self):
         try:
-            selected_tab = self.notebook.index(self.notebook.select())
-            if selected_tab == 3 and hasattr(self, 'analytics_tab'):
+            selected_tab = self.tabview.get()
+            if selected_tab == "Analytics" and hasattr(self, 'analytics_tab'):
                 self.analytics_tab.refresh_selectors()
-        except:
+        except Exception as e:
             pass
+
+    # ==============================================================================
+    # Notebook Tabs Construction
+    # ==============================================================================
+    def setup_tabs(self):
+        self.tabview = ctk.CTkTabview(self.root, command=self.on_tab_changed)
+        self.tabview.pack(fill=tk.BOTH, expand=True, padx=15, pady=(5, 15))
+        
+        self.tabview.add("Cities")
+        self.tabview.add("Drivers")
+        self.tabview.add("Timesheets")
+        self.tabview.add("Analytics")
+        
+        self.setup_cities_tab()
+        self.setup_drivers_tab()
+        self.setup_timesheets_tab()
+        
+        # Setup Analytics tab
+        from ui.analytics_tab import AnalyticsTab
+        self.analytics_tab = AnalyticsTab(self.tabview.tab("Analytics"), self)
+        self.analytics_tab.pack(fill=tk.BOTH, expand=True)
 
     # ==============================================================================
     # 1. Cities Tab
     # ==============================================================================
     def setup_cities_tab(self):
-        cities_frame = ttk.Frame(self.notebook, padding=10)
-        self.notebook.add(cities_frame, text="Cities")
+        cities_frame = self.tabview.tab("Cities")
         
-        # Left: Treeview
-        tree_frame = ttk.Frame(cities_frame)
-        tree_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 10))
+        # Left Panel: Table
+        tree_frame = ctk.CTkFrame(cities_frame, corner_radius=12)
+        tree_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 10), pady=10)
+        
+        ctk.CTkLabel(
+            tree_frame, 
+            text="Configured Cities & Delivery Windows", 
+            font=("Segoe UI", 15, "bold")
+        ).pack(anchor=tk.W, padx=15, pady=(15, 10))
+        
+        inner_tree_frame = ctk.CTkFrame(tree_frame, fg_color="transparent")
+        inner_tree_frame.pack(fill=tk.BOTH, expand=True, padx=15, pady=(0, 15))
         
         cols = ("ID", "Name", "Start Time", "End Time")
-        self.cities_tree = ttk.Treeview(tree_frame, columns=cols, show="headings", selectmode="browse")
+        self.cities_tree = ttk.Treeview(inner_tree_frame, columns=cols, show="headings", selectmode="extended")
         for col in cols:
             self.cities_tree.heading(col, text=col)
-        self.cities_tree.column("ID", width=50, stretch=False)
-        self.cities_tree.column("Name", width=180)
-        self.cities_tree.column("Start Time", width=100, anchor=tk.CENTER)
-        self.cities_tree.column("End Time", width=100, anchor=tk.CENTER)
+        self.cities_tree.column("ID", width=60, stretch=False)
+        self.cities_tree.column("Name", width=220)
+        self.cities_tree.column("Start Time", width=120, anchor=tk.CENTER)
+        self.cities_tree.column("End Time", width=120, anchor=tk.CENTER)
         
-        scrollbar = ttk.Scrollbar(tree_frame, orient=tk.VERTICAL, command=self.cities_tree.yview)
+        scrollbar = ctk.CTkScrollbar(inner_tree_frame, command=self.cities_tree.yview)
         self.cities_tree.configure(yscrollcommand=scrollbar.set)
         
         self.cities_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         
-        # Right: Actions
-        btn_frame = ttk.Frame(cities_frame)
-        btn_frame.pack(side=tk.RIGHT, fill=tk.Y, padx=5)
+        # Right Panel: Actions
+        btn_frame = ctk.CTkFrame(cities_frame, width=220, corner_radius=12)
+        btn_frame.pack(side=tk.RIGHT, fill=tk.Y, padx=(10, 0), pady=10)
         
-        ttk.Button(btn_frame, text="Add City...", command=self.add_city_dialog).pack(fill=tk.X, pady=5)
-        ttk.Button(btn_frame, text="Edit City...", command=self.edit_city_dialog).pack(fill=tk.X, pady=5)
-        ttk.Button(btn_frame, text="Delete City", command=self.delete_city).pack(fill=tk.X, pady=5)
+        ctk.CTkLabel(
+            btn_frame, 
+            text="Actions", 
+            font=("Segoe UI", 15, "bold")
+        ).pack(anchor=tk.W, padx=15, pady=(15, 10))
+        
+        ctk.CTkButton(
+            btn_frame, 
+            text="Add City...", 
+            fg_color="#1a365d", 
+            hover_color="#2b6cb0", 
+            command=self.add_city_dialog
+        ).pack(fill=tk.X, padx=15, pady=8)
+        
+        ctk.CTkButton(
+            btn_frame, 
+            text="Edit Selected...", 
+            command=self.edit_city_dialog
+        ).pack(fill=tk.X, padx=15, pady=8)
+        
+        ctk.CTkButton(
+            btn_frame, 
+            text="Delete City", 
+            fg_color="#742a2a", 
+            hover_color="#9b2c2c", 
+            command=self.delete_city
+        ).pack(fill=tk.X, padx=15, pady=8)
         
         self.load_cities()
 
@@ -199,23 +333,30 @@ class TimesheetAppGUI:
         self.city_form_dialog("Edit City", values)
 
     def city_form_dialog(self, title: str, values: Optional[tuple]):
-        dialog = tk.Toplevel(self.root)
+        dialog = ctk.CTkToplevel(self.root)
         dialog.title(title)
-        dialog.geometry("320x220")
+        dialog.geometry("380x280")
         dialog.resizable(False, False)
+        dialog.transient(self.root)
         dialog.grab_set()
         
-        ttk.Label(dialog, text="City Name:").grid(row=0, column=0, padx=10, pady=10, sticky=tk.W)
+        main_frame = ctk.CTkFrame(dialog, fg_color="transparent")
+        main_frame.pack(fill=ctk.BOTH, expand=True, padx=15, pady=15)
+        
+        ctk.CTkLabel(main_frame, text="City Name:").grid(row=0, column=0, padx=10, pady=10, sticky=tk.W)
         name_var = tk.StringVar(value=values[1] if values else "")
-        ttk.Entry(dialog, textvariable=name_var, width=25).grid(row=0, column=1, padx=10, pady=10)
+        ctk.CTkEntry(main_frame, textvariable=name_var, width=180).grid(row=0, column=1, padx=10, pady=10)
         
-        ttk.Label(dialog, text="Start Time (HH:MM):").grid(row=1, column=0, padx=10, pady=10, sticky=tk.W)
+        ctk.CTkLabel(main_frame, text="Start Time (HH:MM):").grid(row=1, column=0, padx=10, pady=10, sticky=tk.W)
         start_var = tk.StringVar(value=values[2] if values else "08:00")
-        ttk.Entry(dialog, textvariable=start_var, width=25).grid(row=1, column=1, padx=10, pady=10)
+        ctk.CTkEntry(main_frame, textvariable=start_var, width=180).grid(row=1, column=1, padx=10, pady=10)
         
-        ttk.Label(dialog, text="End Time (HH:MM):").grid(row=2, column=0, padx=10, pady=10, sticky=tk.W)
+        ctk.CTkLabel(main_frame, text="End Time (HH:MM):").grid(row=2, column=0, padx=10, pady=10, sticky=tk.W)
         end_var = tk.StringVar(value=values[3] if values else "22:00")
-        ttk.Entry(dialog, textvariable=end_var, width=25).grid(row=2, column=1, padx=10, pady=10)
+        ctk.CTkEntry(main_frame, textvariable=end_var, width=180).grid(row=2, column=1, padx=10, pady=10)
+        
+        warning_lbl = ctk.CTkLabel(main_frame, text="", text_color="#e53e3e", font=("Segoe UI", 10))
+        warning_lbl.grid(row=3, column=0, columnspan=2, pady=(0, 5))
         
         def save():
             name = name_var.get().strip()
@@ -223,7 +364,7 @@ class TimesheetAppGUI:
             end = end_var.get().strip()
             
             if not name or not start or not end:
-                messagebox.showerror("Error", "All fields are required.")
+                warning_lbl.configure(text="All fields are required.")
                 return
             
             # Simple clock validation
@@ -233,7 +374,7 @@ class TimesheetAppGUI:
                     if len(parts) != 2 or not (0 <= int(parts[0]) <= 23) or not (0 <= int(parts[1]) <= 59):
                         raise ValueError()
                 except:
-                    messagebox.showerror("Error", "Times must be in HH:MM format.")
+                    warning_lbl.configure(text="Times must be in HH:MM format.")
                     return
             
             try:
@@ -246,59 +387,95 @@ class TimesheetAppGUI:
                 self.refresh_all_views()
                 dialog.destroy()
             except sqlite3.IntegrityError:
-                messagebox.showerror("Error", "A city with this name already exists.")
+                warning_lbl.configure(text="A city with this name already exists.")
 
-        ttk.Button(dialog, text="Save", command=save).grid(row=3, column=0, columnspan=2, pady=15)
+        ctk.CTkButton(main_frame, text="Save", command=save, width=140).grid(row=4, column=0, columnspan=2, pady=15)
 
     def delete_city(self):
         selected = self.cities_tree.selection()
         if not selected:
-            messagebox.showwarning("Select City", "Please select a city to delete.")
+            messagebox.showwarning("Select City", "Please select one or more cities to delete.")
             return
-        values = self.cities_tree.item(selected[0], "values")
-        city_id, name = int(values[0]), values[1]
         
-        confirm = messagebox.askyesno("Confirm Delete", f"Are you sure you want to delete city '{name}'?")
+        confirm = messagebox.askyesno("Confirm Delete", f"Are you sure you want to delete {len(selected)} selected city/cities?")
         if confirm:
-            try:
-                models.delete_city(city_id)
-                self.write_log(f"[DB] Deleted city '{name}'")
+            success = 0
+            for item in selected:
+                values = self.cities_tree.item(item, "values")
+                city_id, name = int(values[0]), values[1]
+                try:
+                    models.delete_city(city_id)
+                    self.write_log(f"[DB] Deleted city '{name}'")
+                    success += 1
+                except sqlite3.IntegrityError:
+                    messagebox.showerror("Error", f"Cannot delete city '{name}'. There are timesheets referencing it.")
+            if success > 0:
                 self.refresh_all_views()
-            except sqlite3.IntegrityError:
-                messagebox.showerror("Error", "Cannot delete city. There are timesheets referencing it.")
 
     # ==============================================================================
     # 2. Drivers Tab
     # ==============================================================================
     def setup_drivers_tab(self):
-        drivers_frame = ttk.Frame(self.notebook, padding=10)
-        self.notebook.add(drivers_frame, text="Drivers")
+        drivers_frame = self.tabview.tab("Drivers")
         
-        # Left: Treeview
-        tree_frame = ttk.Frame(drivers_frame)
-        tree_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 10))
+        # Left Panel: Table
+        tree_frame = ctk.CTkFrame(drivers_frame, corner_radius=12)
+        tree_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 10), pady=10)
+        
+        ctk.CTkLabel(
+            tree_frame, 
+            text="Registered Delivery Drivers", 
+            font=("Segoe UI", 15, "bold")
+        ).pack(anchor=tk.W, padx=15, pady=(15, 10))
+        
+        inner_tree_frame = ctk.CTkFrame(tree_frame, fg_color="transparent")
+        inner_tree_frame.pack(fill=tk.BOTH, expand=True, padx=15, pady=(0, 15))
         
         cols = ("ID", "Name", "Personal ID")
-        self.drivers_tree = ttk.Treeview(tree_frame, columns=cols, show="headings", selectmode="browse")
+        self.drivers_tree = ttk.Treeview(inner_tree_frame, columns=cols, show="headings", selectmode="extended")
         for col in cols:
             self.drivers_tree.heading(col, text=col)
-        self.drivers_tree.column("ID", width=50, stretch=False)
-        self.drivers_tree.column("Name", width=200)
-        self.drivers_tree.column("Personal ID", width=150)
+        self.drivers_tree.column("ID", width=60, stretch=False)
+        self.drivers_tree.column("Name", width=250)
+        self.drivers_tree.column("Personal ID", width=180)
         
-        scrollbar = ttk.Scrollbar(tree_frame, orient=tk.VERTICAL, command=self.drivers_tree.yview)
+        scrollbar = ctk.CTkScrollbar(inner_tree_frame, command=self.drivers_tree.yview)
         self.drivers_tree.configure(yscrollcommand=scrollbar.set)
         
         self.drivers_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         
-        # Right: Actions
-        btn_frame = ttk.Frame(drivers_frame)
-        btn_frame.pack(side=tk.RIGHT, fill=tk.Y, padx=5)
+        # Right Panel: Actions
+        btn_frame = ctk.CTkFrame(drivers_frame, width=220, corner_radius=12)
+        btn_frame.pack(side=tk.RIGHT, fill=tk.Y, padx=(10, 0), pady=10)
         
-        ttk.Button(btn_frame, text="Add Driver...", command=self.add_driver_dialog).pack(fill=tk.X, pady=5)
-        ttk.Button(btn_frame, text="Edit Driver...", command=self.edit_driver_dialog).pack(fill=tk.X, pady=5)
-        ttk.Button(btn_frame, text="Delete Driver", command=self.delete_driver).pack(fill=tk.X, pady=5)
+        ctk.CTkLabel(
+            btn_frame, 
+            text="Actions", 
+            font=("Segoe UI", 15, "bold")
+        ).pack(anchor=tk.W, padx=15, pady=(15, 10))
+        
+        ctk.CTkButton(
+            btn_frame, 
+            text="Add Driver...", 
+            fg_color="#1a365d", 
+            hover_color="#2b6cb0", 
+            command=self.add_driver_dialog
+        ).pack(fill=tk.X, padx=15, pady=8)
+        
+        ctk.CTkButton(
+            btn_frame, 
+            text="Edit Selected...", 
+            command=self.edit_driver_dialog
+        ).pack(fill=tk.X, padx=15, pady=8)
+        
+        ctk.CTkButton(
+            btn_frame, 
+            text="Delete Driver", 
+            fg_color="#742a2a", 
+            hover_color="#9b2c2c", 
+            command=self.delete_driver
+        ).pack(fill=tk.X, padx=15, pady=8)
         
         self.load_drivers()
 
@@ -319,26 +496,33 @@ class TimesheetAppGUI:
         self.driver_form_dialog("Edit Driver", values)
 
     def driver_form_dialog(self, title: str, values: Optional[tuple]):
-        dialog = tk.Toplevel(self.root)
+        dialog = ctk.CTkToplevel(self.root)
         dialog.title(title)
-        dialog.geometry("320x180")
+        dialog.geometry("380x240")
         dialog.resizable(False, False)
+        dialog.transient(self.root)
         dialog.grab_set()
         
-        ttk.Label(dialog, text="Driver Name:").grid(row=0, column=0, padx=10, pady=15, sticky=tk.W)
-        name_var = tk.StringVar(value=values[1] if values else "")
-        ttk.Entry(dialog, textvariable=name_var, width=25).grid(row=0, column=1, padx=10, pady=15)
+        main_frame = ctk.CTkFrame(dialog, fg_color="transparent")
+        main_frame.pack(fill=ctk.BOTH, expand=True, padx=15, pady=15)
         
-        ttk.Label(dialog, text="Personal ID:").grid(row=1, column=0, padx=10, pady=10, sticky=tk.W)
+        ctk.CTkLabel(main_frame, text="Driver Name:").grid(row=0, column=0, padx=10, pady=12, sticky=tk.W)
+        name_var = tk.StringVar(value=values[1] if values else "")
+        ctk.CTkEntry(main_frame, textvariable=name_var, width=180).grid(row=0, column=1, padx=10, pady=12)
+        
+        ctk.CTkLabel(main_frame, text="Personal ID:").grid(row=1, column=0, padx=10, pady=12, sticky=tk.W)
         id_var = tk.StringVar(value=values[2] if values else "")
-        ttk.Entry(dialog, textvariable=id_var, width=25).grid(row=1, column=1, padx=10, pady=10)
+        ctk.CTkEntry(main_frame, textvariable=id_var, width=180).grid(row=1, column=1, padx=10, pady=12)
+        
+        warning_lbl = ctk.CTkLabel(main_frame, text="", text_color="#e53e3e", font=("Segoe UI", 10))
+        warning_lbl.grid(row=2, column=0, columnspan=2, pady=(0, 5))
         
         def save():
             name = name_var.get().strip()
             personal_id = id_var.get().strip()
             
             if not name or not personal_id:
-                messagebox.showerror("Error", "All fields are required.")
+                warning_lbl.configure(text="All fields are required.")
                 return
             
             if values:  # Edit Mode
@@ -350,112 +534,160 @@ class TimesheetAppGUI:
             self.refresh_all_views()
             dialog.destroy()
 
-        ttk.Button(dialog, text="Save", command=save).grid(row=2, column=0, columnspan=2, pady=15)
+        ctk.CTkButton(main_frame, text="Save", command=save, width=140).grid(row=3, column=0, columnspan=2, pady=15)
 
     def delete_driver(self):
         selected = self.drivers_tree.selection()
         if not selected:
-            messagebox.showwarning("Select Driver", "Please select a driver to delete.")
+            messagebox.showwarning("Select Driver", "Please select one or more drivers to delete.")
             return
-        values = self.drivers_tree.item(selected[0], "values")
-        emp_id, name = int(values[0]), values[1]
         
-        confirm = messagebox.askyesno("Confirm Delete", f"Are you sure you want to delete driver '{name}'?")
+        confirm = messagebox.askyesno("Confirm Delete", f"Are you sure you want to delete {len(selected)} selected driver(s)?")
         if confirm:
-            try:
-                models.delete_employee(emp_id)
-                self.write_log(f"[DB] Deleted driver '{name}'")
+            success = 0
+            for item in selected:
+                values = self.drivers_tree.item(item, "values")
+                emp_id, name = int(values[0]), values[1]
+                try:
+                    models.delete_employee(emp_id)
+                    self.write_log(f"[DB] Deleted driver '{name}'")
+                    success += 1
+                except sqlite3.IntegrityError:
+                    messagebox.showerror("Error", f"Cannot delete driver '{name}'. There are timesheets referencing them.")
+            if success > 0:
                 self.refresh_all_views()
-            except sqlite3.IntegrityError:
-                messagebox.showerror("Error", "Cannot delete employee. There are timesheets referencing them.")
 
     # ==============================================================================
     # 3. Timesheets Tab & Solver Integration
     # ==============================================================================
     def setup_timesheets_tab(self):
-        timesheets_frame = ttk.Frame(self.notebook, padding=10)
-        self.notebook.add(timesheets_frame, text="Timesheets")
+        timesheets_frame = self.tabview.tab("Timesheets")
         
-        # Horizontal Split: Left side lists, Right side preview/edit
-        h_paned = ttk.PanedWindow(timesheets_frame, orient=tk.HORIZONTAL)
-        h_paned.pack(fill=tk.BOTH, expand=True)
+        # Grid weights to make side-by-side frames scale nicely
+        timesheets_frame.columnconfigure(0, weight=1)
+        timesheets_frame.columnconfigure(1, weight=1)
+        timesheets_frame.rowconfigure(0, weight=1)
         
-        # LEFT: List panel
-        list_panel = ttk.Frame(h_paned)
-        h_paned.add(list_panel, weight=1)
+        # LEFT: List Panel Card
+        self.left_panel = ctk.CTkFrame(timesheets_frame, corner_radius=12)
+        self.left_panel.grid(row=0, column=0, sticky="nsew", padx=(0, 10), pady=10)
         
-        # Filters Header
-        filter_frame = ttk.Frame(list_panel)
-        filter_frame.pack(fill=tk.X, pady=(0, 5))
+        # Filters Header Bar
+        filter_frame = ctk.CTkFrame(self.left_panel, fg_color="transparent")
+        filter_frame.pack(fill=tk.X, padx=15, pady=(15, 10))
         
-        ttk.Label(filter_frame, text="City:").pack(side=tk.LEFT, padx=2)
-        self.filter_city_combo = ttk.Combobox(filter_frame, width=12, state="readonly")
-        self.filter_city_combo.pack(side=tk.LEFT, padx=5)
-        self.filter_city_combo.bind("<<ComboboxSelected>>", lambda e: self.load_timesheets())
+        ctk.CTkLabel(filter_frame, text="City:").pack(side=tk.LEFT, padx=(0, 5))
+        self.filter_city_menu = ctk.CTkOptionMenu(
+            filter_frame, 
+            values=["All Cities"], 
+            width=130,
+            command=lambda val: self.load_timesheets()
+        )
+        self.filter_city_menu.pack(side=tk.LEFT, padx=(0, 15))
         
-        ttk.Label(filter_frame, text="Month:").pack(side=tk.LEFT, padx=2)
-        self.filter_month_combo = ttk.Combobox(filter_frame, width=10, state="readonly")
-        self.filter_month_combo.pack(side=tk.LEFT, padx=5)
-        self.filter_month_combo.bind("<<ComboboxSelected>>", lambda e: self.load_timesheets())
+        ctk.CTkLabel(filter_frame, text="Month:").pack(side=tk.LEFT, padx=(0, 5))
+        self.filter_month_menu = ctk.CTkOptionMenu(
+            filter_frame, 
+            values=["All Months"], 
+            width=120,
+            command=lambda val: self.load_timesheets()
+        )
+        self.filter_month_menu.pack(side=tk.LEFT)
         
-        # List Treeview
+        # List Treeview Frame
+        list_tree_frame = ctk.CTkFrame(self.left_panel, fg_color="transparent")
+        list_tree_frame.pack(fill=tk.BOTH, expand=True, padx=15, pady=(0, 10))
+        
         ts_cols = ("ID", "Driver", "City", "Month/Year", "Target Hours", "Status", "Locked")
-        self.timesheets_tree = ttk.Treeview(list_panel, columns=ts_cols, show="headings", selectmode="browse")
+        self.timesheets_tree = ttk.Treeview(list_tree_frame, columns=ts_cols, show="headings", selectmode="extended")
         for col in ts_cols:
             self.timesheets_tree.heading(col, text=col)
         self.timesheets_tree.column("ID", width=40, stretch=False)
         self.timesheets_tree.column("Driver", width=120)
         self.timesheets_tree.column("City", width=100)
-        self.timesheets_tree.column("Month/Year", width=80, anchor=tk.CENTER)
+        self.timesheets_tree.column("Month/Year", width=90, anchor=tk.CENTER)
         self.timesheets_tree.column("Target Hours", width=90, anchor=tk.CENTER)
         self.timesheets_tree.column("Status", width=80, anchor=tk.CENTER)
         self.timesheets_tree.column("Locked", width=60, anchor=tk.CENTER)
         
-        ts_scrollbar = ttk.Scrollbar(list_panel, orient=tk.VERTICAL, command=self.timesheets_tree.yview)
+        # Status styling colors
+        self.timesheets_tree.tag_configure("draft", foreground="#3182ce")
+        self.timesheets_tree.tag_configure("finalized", foreground="#38a169")
+        self.timesheets_tree.tag_configure("locked", foreground="#dd6b20")
+        
+        ts_scrollbar = ctk.CTkScrollbar(list_tree_frame, command=self.timesheets_tree.yview)
         self.timesheets_tree.configure(yscrollcommand=ts_scrollbar.set)
         
-        self.timesheets_tree.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
-        ts_scrollbar.pack(side=tk.RIGHT, fill=tk.Y, before=self.timesheets_tree)
+        self.timesheets_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        ts_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         self.timesheets_tree.bind("<<TreeviewSelect>>", self.on_timesheet_select)
         
-        # Left Actions Buttons
-        la_frame = ttk.Frame(list_panel, padding=5)
-        la_frame.pack(fill=tk.X, side=tk.BOTTOM)
+        # Left Actions Buttons Frame
+        la_frame = ctk.CTkFrame(self.left_panel, fg_color="transparent")
+        la_frame.pack(fill=tk.X, padx=15, pady=(0, 15))
         
-        ttk.Button(la_frame, text="New Timesheet...", command=self.new_timesheet_dialog).pack(side=tk.LEFT, padx=5)
-        ttk.Button(la_frame, text="Delete Timesheet", command=self.delete_timesheet).pack(side=tk.LEFT, padx=5)
-        ttk.Button(la_frame, text="Export to Word", command=self.export_timesheet).pack(side=tk.RIGHT, padx=5)
+        ctk.CTkButton(
+            la_frame, 
+            text="+ New Timesheet...", 
+            width=135,
+            fg_color="#1a365d", 
+            hover_color="#2b6cb0",
+            command=self.new_timesheet_dialog
+        ).pack(side=tk.LEFT, padx=(0, 10))
         
-        # RIGHT: Detail & Grid Preview Panel
-        self.detail_panel = ttk.LabelFrame(h_paned, text=" Daily Shift Schedule Preview (Double-click cell to manually edit) ", padding=10)
-        h_paned.add(self.detail_panel, weight=1)
+        ctk.CTkButton(
+            la_frame, 
+            text="Delete Timesheet", 
+            width=130,
+            fg_color="#742a2a", 
+            hover_color="#9b2c2c",
+            command=self.delete_timesheet
+        ).pack(side=tk.LEFT)
         
-        # Detail Header metadata labels
-        self.meta_frame = ttk.Frame(self.detail_panel)
-        self.meta_frame.pack(fill=tk.X, pady=(0, 10))
+        self.btn_export_word = ctk.CTkButton(
+            la_frame, 
+            text="Export Word (.docx)", 
+            width=150,
+            fg_color="#2c3e50",
+            hover_color="#34495e",
+            command=self.export_timesheet
+        )
+        self.btn_export_word.pack(side=tk.RIGHT)
         
-        self.meta_lbl = ttk.Label(self.meta_frame, text="No timesheet selected.", font=("Segoe UI", 11, "bold"), foreground="#1a365d")
+        # RIGHT: Detail & Grid Preview Panel Card
+        self.detail_frame = ctk.CTkFrame(timesheets_frame, corner_radius=12)
+        self.detail_frame.grid(row=0, column=1, sticky="nsew", padx=(10, 0), pady=10)
+        
+        # Detail Header metadata label + Status Badge
+        self.meta_frame = ctk.CTkFrame(self.detail_frame, fg_color="transparent")
+        self.meta_frame.pack(fill=tk.X, padx=15, pady=(15, 5))
+        
+        self.meta_lbl = ctk.CTkLabel(
+            self.meta_frame, 
+            text="No timesheet selected.", 
+            font=("Segoe UI", 13, "bold")
+        )
         self.meta_lbl.pack(side=tk.LEFT)
         
-        # Detail Actions
-        self.da_frame = ttk.Frame(self.detail_panel)
-        self.da_frame.pack(fill=tk.X, side=tk.BOTTOM, pady=5)
+        self.status_badge = ctk.CTkLabel(
+            self.meta_frame, 
+            text="", 
+            font=("Segoe UI", 11, "bold"), 
+            corner_radius=6, 
+            height=22
+        )
+        # Packed dynamically when selection updates
         
-        self.btn_single_solve = ttk.Button(self.da_frame, text="Distribute (Single)", command=self.solve_single_timesheet)
-        self.btn_single_solve.pack(side=tk.LEFT, padx=5)
+        # Loading/Solving progress indicator
+        self.progress_bar = ctk.CTkProgressBar(self.detail_frame, mode="indeterminate", height=6)
+        # Packed dynamically during solver run
         
-        self.btn_batch_solve = ttk.Button(self.da_frame, text="Distribute All (City Batch)", command=self.solve_batch_timesheets)
-        self.btn_batch_solve.pack(side=tk.LEFT, padx=5)
+        # Daily Grid Frame
+        grid_frame = ctk.CTkFrame(self.detail_frame, fg_color="transparent")
+        grid_frame.pack(fill=tk.BOTH, expand=True, padx=15, pady=5)
         
-        self.btn_finalize = ttk.Button(self.da_frame, text="Finalize", command=self.finalize_timesheet)
-        self.btn_finalize.pack(side=tk.RIGHT, padx=5)
-        
-        self.btn_revert = ttk.Button(self.da_frame, text="Revert to Draft", command=self.revert_timesheet)
-        self.btn_revert.pack(side=tk.RIGHT, padx=5)
-        
-        # Daily Grid
         grid_cols = ("Date", "Start Time", "End Time", "Break", "Hours Worked", "Remarks")
-        self.grid_tree = ttk.Treeview(self.detail_panel, columns=grid_cols, show="headings", selectmode="browse")
+        self.grid_tree = ttk.Treeview(grid_frame, columns=grid_cols, show="headings", selectmode="browse")
         for col in grid_cols:
             self.grid_tree.heading(col, text=col)
         self.grid_tree.column("Date", width=90, anchor=tk.CENTER)
@@ -465,13 +697,53 @@ class TimesheetAppGUI:
         self.grid_tree.column("Hours Worked", width=100, anchor=tk.CENTER)
         self.grid_tree.column("Remarks", width=150)
         
-        grid_scrollbar = ttk.Scrollbar(self.detail_panel, orient=tk.VERTICAL, command=self.grid_tree.yview)
+        grid_scrollbar = ctk.CTkScrollbar(grid_frame, command=self.grid_tree.yview)
         self.grid_tree.configure(yscrollcommand=grid_scrollbar.set)
-        self.grid_tree.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
-        grid_scrollbar.pack(side=tk.RIGHT, fill=tk.Y, before=self.grid_tree)
+        self.grid_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        grid_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         
         self.grid_tree.bind("<Double-1>", self.on_grid_double_click)
-
+        
+        # Detail Actions Frame
+        self.da_frame = ctk.CTkFrame(self.detail_frame, fg_color="transparent")
+        self.da_frame.pack(fill=tk.X, padx=15, pady=(5, 15))
+        
+        self.btn_single_solve = ctk.CTkButton(
+            self.da_frame, 
+            text="Distribute (Single)", 
+            width=135,
+            command=self.solve_single_timesheet
+        )
+        self.btn_single_solve.pack(side=tk.LEFT, padx=(0, 10))
+        
+        self.btn_batch_solve = ctk.CTkButton(
+            self.da_frame, 
+            text="Distribute All (City)", 
+            width=140,
+            command=self.solve_batch_timesheets
+        )
+        self.btn_batch_solve.pack(side=tk.LEFT)
+        
+        self.btn_revert = ctk.CTkButton(
+            self.da_frame, 
+            text="Revert to Draft", 
+            width=110,
+            fg_color="#4a5568",
+            hover_color="#2d3748",
+            command=self.revert_timesheet
+        )
+        self.btn_revert.pack(side=tk.RIGHT)
+        
+        self.btn_finalize = ctk.CTkButton(
+            self.da_frame, 
+            text="Finalize Schedule", 
+            width=130,
+            fg_color="#2f855a",
+            hover_color="#22543d",
+            command=self.finalize_timesheet
+        )
+        self.btn_finalize.pack(side=tk.RIGHT, padx=(0, 10))
+        
         # Refresh combinations
         self.refresh_timesheet_combos()
         self.load_timesheets()
@@ -479,23 +751,23 @@ class TimesheetAppGUI:
     def refresh_timesheet_combos(self):
         # 1. Cities
         cities = ["All Cities"] + [c["name"] for c in models.get_cities()]
-        self.filter_city_combo["values"] = cities
-        if not self.filter_city_combo.get():
-            self.filter_city_combo.set("All Cities")
+        self.filter_city_menu.configure(values=cities)
+        if self.filter_city_menu.get() not in cities:
+            self.filter_city_menu.set("All Cities")
             
-        # 2. Months (standard query or hardcoded recent)
+        # 2. Months
         months = ["All Months", "01.2026", "02.2026", "03.2026", "04.2026", "05.2026", "06.2026", "07.2026", "08.2026", "09.2026", "10.2026", "11.2026", "12.2026"]
-        self.filter_month_combo["values"] = months
-        if not self.filter_month_combo.get():
-            self.filter_month_combo.set("All Months")
+        self.filter_month_menu.configure(values=months)
+        if self.filter_month_menu.get() not in months:
+            self.filter_month_menu.set("All Months")
 
     def load_timesheets(self):
-        selected_city = self.filter_city_combo.get()
-        selected_month_str = self.filter_month_combo.get()
+        selected_city = self.filter_city_menu.get()
+        selected_month_str = self.filter_month_menu.get()
         
         # Resolve IDs
         city_id = None
-        if selected_city != "All Cities":
+        if selected_city != "All Cities" and selected_city != "No cities":
             for c in models.get_cities():
                 if c["name"] == selected_city:
                     city_id = c["id"]
@@ -513,23 +785,35 @@ class TimesheetAppGUI:
         self.timesheets_tree.delete(*self.timesheets_tree.get_children())
         for ts in models.get_timesheets(city_id=city_id, year=year, month=month):
             locked_str = "Yes" if ts["is_distribution_locked"] else "No"
+            
+            # Row tag selection
+            if ts["status"] == "Finalized":
+                tag = "finalized"
+            elif ts["is_distribution_locked"]:
+                tag = "locked"
+            else:
+                tag = "draft"
+                
             self.timesheets_tree.insert(
                 "", tk.END, values=(
                     ts["id"], ts["employee_name"], ts["city_name"],
                     f"{ts['month']:02d}.{ts['year']}", ts["target_hours"],
                     ts["status"], locked_str
-                )
+                ),
+                tags=(tag,)
             )
         self.clear_detail_panel()
 
     def clear_detail_panel(self):
-        self.meta_lbl.config(text="No timesheet selected.")
+        self.meta_lbl.configure(text="No timesheet selected.")
+        self.status_badge.pack_forget()
         self.grid_tree.delete(*self.grid_tree.get_children())
+        
         # Disable detail buttons
-        self.btn_single_solve.state(["disabled"])
-        self.btn_batch_solve.state(["disabled"])
-        self.btn_finalize.state(["disabled"])
-        self.btn_revert.state(["disabled"])
+        self.btn_single_solve.configure(state="disabled")
+        self.btn_batch_solve.configure(state="disabled")
+        self.btn_finalize.configure(state="disabled")
+        self.btn_revert.configure(state="disabled")
 
     def on_timesheet_select(self, event):
         selected = self.timesheets_tree.selection()
@@ -546,29 +830,52 @@ class TimesheetAppGUI:
             self.clear_detail_panel()
             return
             
-        self.meta_lbl.config(
-            text=f"{ts['employee_name']} - {ts['city_name']} ({ts['month']:02d}.{ts['year']}) | Target: {ts['target_hours']}h | Status: {ts['status']}"
+        self.meta_lbl.configure(
+            text=f"{ts['employee_name']} - {ts['city_name']} ({ts['month']:02d}.{ts['year']}) | Target: {ts['target_hours']}h"
         )
         
-        # Enable action buttons appropriately
-        self.btn_single_solve.state(["!disabled"])
-        self.btn_batch_solve.state(["!disabled"])
+        # Show and style status badge
+        self.status_badge.pack_forget()
+        is_dark = (ctk.get_appearance_mode() == "Dark")
         if ts["status"] == "Finalized":
-            self.btn_finalize.state(["disabled"])
-            self.btn_revert.state(["!disabled"])
-            self.btn_single_solve.state(["disabled"])
-            self.btn_batch_solve.state(["disabled"])
+            self.status_badge.configure(
+                text=" FINALIZED ",
+                fg_color="#1c4532" if is_dark else "#c6f6d5",
+                text_color="#9ae6b4" if is_dark else "#22543d"
+            )
+        elif ts["is_distribution_locked"]:
+            self.status_badge.configure(
+                text=" LOCKED ",
+                fg_color="#7b341e" if is_dark else "#feebc8",
+                text_color="#fbd38d" if is_dark else "#744210"
+            )
         else:
-            self.btn_finalize.state(["!disabled"])
-            self.btn_revert.state(["disabled"])
-            self.btn_single_solve.state(["!disabled"])
-            self.btn_batch_solve.state(["!disabled"])
+            self.status_badge.configure(
+                text=" DRAFT ",
+                fg_color="#1a365d" if is_dark else "#ebf8ff",
+                text_color="#90cdf4" if is_dark else "#2b6cb0"
+            )
+        self.status_badge.pack(side=tk.LEFT, padx=10)
+        
+        # Enable action buttons appropriately
+        self.btn_single_solve.configure(state="normal")
+        self.btn_batch_solve.configure(state="normal")
+        
+        if ts["status"] == "Finalized":
+            self.btn_finalize.configure(state="disabled")
+            self.btn_revert.configure(state="normal")
+            self.btn_single_solve.configure(state="disabled")
+            self.btn_batch_solve.configure(state="disabled")
+        else:
+            self.btn_finalize.configure(state="normal")
+            self.btn_revert.configure(state="disabled")
+            self.btn_single_solve.configure(state="normal")
+            self.btn_batch_solve.configure(state="normal")
             
         # Load daily entries grid
         self.grid_tree.delete(*self.grid_tree.get_children())
         for entry in ts["entries"]:
             work_date = entry["work_date"]
-            # format to German date in treeview
             formatted_date = work_date
             if '-' in work_date:
                 dt = datetime.strptime(work_date, "%Y-%m-%d")
@@ -589,13 +896,13 @@ class TimesheetAppGUI:
     # Timesheet Creation Dialog
     # ==============================================================================
     def new_timesheet_dialog(self):
-        dialog = tk.Toplevel(self.root)
+        dialog = ctk.CTkToplevel(self.root)
         dialog.title("New Timesheet")
-        dialog.geometry("380x280")
+        dialog.geometry("480x480")
         dialog.resizable(False, False)
+        dialog.transient(self.root)
         dialog.grab_set()
         
-        # Fetch data for combos
         drivers = models.get_employees()
         cities = models.get_cities()
         
@@ -604,30 +911,68 @@ class TimesheetAppGUI:
             dialog.destroy()
             return
             
-        ttk.Label(dialog, text="Select Driver:").grid(row=0, column=0, padx=10, pady=10, sticky=tk.W)
-        driver_combo = ttk.Combobox(dialog, values=[d["name"] for d in drivers], state="readonly", width=25)
-        driver_combo.grid(row=0, column=1, padx=10, pady=10)
+        main_frame = ctk.CTkFrame(dialog, fg_color="transparent")
+        main_frame.pack(fill=ctk.BOTH, expand=True, padx=15, pady=15)
         
-        ttk.Label(dialog, text="Select City:").grid(row=1, column=0, padx=10, pady=10, sticky=tk.W)
-        city_combo = ttk.Combobox(dialog, values=[c["name"] for c in cities], state="readonly", width=25)
-        city_combo.grid(row=1, column=1, padx=10, pady=10)
+        ctk.CTkLabel(main_frame, text="Select Driver(s):").grid(row=0, column=0, padx=10, pady=10, sticky=tk.NW)
         
-        ttk.Label(dialog, text="Month & Year (MM.YYYY):").grid(row=2, column=0, padx=10, pady=10, sticky=tk.W)
+        # Scrollable list of driver checkboxes
+        drivers_scroll = ctk.CTkScrollableFrame(main_frame, width=220, height=120)
+        drivers_scroll.grid(row=0, column=1, padx=10, pady=10, sticky=tk.W)
+        
+        self.driver_checkboxes = []
+        for d in drivers:
+            cb = ctk.CTkCheckBox(drivers_scroll, text=d["name"])
+            cb.pack(anchor=tk.W, padx=5, pady=5)
+            self.driver_checkboxes.append((d["id"], d["name"], cb))
+            
+        # Select All / Deselect All helpers
+        helper_frame = ctk.CTkFrame(main_frame, fg_color="transparent")
+        helper_frame.grid(row=1, column=1, padx=10, pady=(0, 10), sticky=tk.W)
+        
+        def select_all():
+            for _, _, cb in self.driver_checkboxes:
+                cb.select()
+                
+        def deselect_all():
+            for _, _, cb in self.driver_checkboxes:
+                cb.deselect()
+                
+        ctk.CTkButton(helper_frame, text="Select All", width=80, height=22, fg_color="#3182ce", text_color="white", hover_color="#2b6cb0", command=select_all).pack(side=tk.LEFT, padx=(0, 10))
+        ctk.CTkButton(helper_frame, text="Deselect All", width=90, height=22, fg_color="#4a5568", text_color="white", hover_color="#2d3748", command=deselect_all).pack(side=tk.LEFT)
+        
+        ctk.CTkLabel(main_frame, text="Select City:").grid(row=2, column=0, padx=10, pady=10, sticky=tk.W)
+        city_names = [c["name"] for c in cities]
+        city_menu = ctk.CTkOptionMenu(main_frame, values=city_names, width=240)
+        city_menu.grid(row=2, column=1, padx=10, pady=10)
+        
+        ctk.CTkLabel(main_frame, text="Month & Year (MM.YYYY):").grid(row=3, column=0, padx=10, pady=10, sticky=tk.W)
         month_var = tk.StringVar(value=datetime.now().strftime("%m.%Y"))
-        ttk.Entry(dialog, textvariable=month_var, width=27).grid(row=2, column=1, padx=10, pady=10)
+        ctk.CTkEntry(main_frame, textvariable=month_var, width=240).grid(row=3, column=1, padx=10, pady=10)
         
-        ttk.Label(dialog, text="Target Hours:").grid(row=3, column=0, padx=10, pady=10, sticky=tk.W)
+        ctk.CTkLabel(main_frame, text="Target Hours:").grid(row=4, column=0, padx=10, pady=10, sticky=tk.W)
         target_var = tk.StringVar(value="80.0")
-        ttk.Entry(dialog, textvariable=target_var, width=27).grid(row=3, column=1, padx=10, pady=10)
+        ctk.CTkEntry(main_frame, textvariable=target_var, width=240).grid(row=4, column=1, padx=10, pady=10)
+        
+        warning_lbl = ctk.CTkLabel(main_frame, text="", text_color="#e53e3e", font=("Segoe UI", 10))
+        warning_lbl.grid(row=5, column=0, columnspan=2, pady=(5, 5))
         
         def create():
-            d_name = driver_combo.get()
-            c_name = city_combo.get()
+            selected_drivers = []
+            for emp_id, name, cb in self.driver_checkboxes:
+                if cb.get() == 1:
+                    selected_drivers.append((emp_id, name))
+            
+            if not selected_drivers:
+                warning_lbl.configure(text="Please select at least one driver.")
+                return
+                
+            c_name = city_menu.get()
             m_year = month_var.get().strip()
             target_str = target_var.get().strip()
             
-            if not d_name or not c_name or not m_year or not target_str:
-                messagebox.showerror("Error", "All fields are required.")
+            if not c_name or not m_year or not target_str:
+                warning_lbl.configure(text="All fields are required.")
                 return
                 
             try:
@@ -636,13 +981,13 @@ class TimesheetAppGUI:
                 if not (1 <= month <= 12) or year < 2000:
                     raise ValueError()
             except:
-                messagebox.showerror("Error", "Invalid Month/Year format. Use MM.YYYY (e.g. 06.2026).")
+                warning_lbl.configure(text="Invalid Month/Year. Use MM.YYYY (e.g. 06.2026).")
                 return
                 
             # Current or future month restriction
             now = datetime.now()
             if year < now.year or (year == now.year and month < now.month):
-                messagebox.showerror("Error", "Timesheets can only be created for the current or future months.")
+                warning_lbl.configure(text="Timesheets can only be for current or future months.")
                 return
                 
             try:
@@ -650,7 +995,7 @@ class TimesheetAppGUI:
                 if target_hours % 0.5 != 0:
                     raise ValueError("Must be a multiple of 0.5")
             except:
-                messagebox.showerror("Error", "Target hours must be a valid number and a multiple of 0.5.")
+                warning_lbl.configure(text="Target hours must be a number and multiple of 0.5.")
                 return
                 
             # Bounds checking
@@ -659,39 +1004,50 @@ class TimesheetAppGUI:
             max_hours_allowed = max_wd * 8.0
             
             if target_hours < 10.0 or target_hours > max_hours_allowed:
-                messagebox.showerror(
-                    "Error",
-                    f"Target hours must be within bounds: [10.0, {max_hours_allowed}].\n"
-                    f"(For a {num_days}-day month, maximum workdays under 6-consecutive-day limit is {max_wd} days)"
-                )
+                warning_lbl.configure(text=f"Target hours out of bounds [10.0, {max_hours_allowed}].")
                 return
                 
-            # Fetch IDs
-            emp_id = next(d["id"] for d in drivers if d["name"] == d_name)
             city_id = next(c["id"] for c in cities if c["name"] == c_name)
             
-            try:
-                models.create_timesheet(emp_id, city_id, year, month, target_hours)
-                self.write_log(f"[DB] Created timesheet for {d_name} in {c_name} ({m_year})")
-                self.load_timesheets()
-                dialog.destroy()
-            except sqlite3.IntegrityError:
-                messagebox.showerror("Error", "Timesheet already exists for this driver, city, and month.")
+            success_count = 0
+            fail_count = 0
+            for emp_id, d_name in selected_drivers:
+                try:
+                    models.create_timesheet(emp_id, city_id, year, month, target_hours)
+                    self.write_log(f"[DB] Created timesheet for {d_name} in {c_name} ({m_year})")
+                    success_count += 1
+                except sqlite3.IntegrityError:
+                    self.write_log(f"[DB] Timesheet already exists for {d_name} in {c_name} ({m_year})")
+                    fail_count += 1
+                    
+            self.load_timesheets()
+            
+            if fail_count > 0:
+                messagebox.showinfo(
+                    "Creation Summary", 
+                    f"Created {success_count} timesheets successfully.\n"
+                    f"Skipped {fail_count} timesheets because they already exist."
+                )
+            else:
+                self.write_log(f"[System] Successfully generated {success_count} timesheets.")
                 
-        ttk.Button(dialog, text="Create", command=create).grid(row=4, column=0, columnspan=2, pady=15)
+            dialog.destroy()
+                
+        ctk.CTkButton(main_frame, text="Create", command=create, width=140).grid(row=6, column=0, columnspan=2, pady=15)
 
     def delete_timesheet(self):
         selected = self.timesheets_tree.selection()
         if not selected:
-            messagebox.showwarning("Select Timesheet", "Please select a timesheet to delete.")
+            messagebox.showwarning("Select Timesheet", "Please select one or more timesheets to delete.")
             return
-        values = self.timesheets_tree.item(selected[0], "values")
-        ts_id = int(values[0])
         
-        confirm = messagebox.askyesno("Confirm Delete", f"Are you sure you want to delete timesheet ID {ts_id}?")
+        confirm = messagebox.askyesno("Confirm Delete", f"Are you sure you want to delete {len(selected)} selected timesheet(s)?")
         if confirm:
-            models.delete_timesheet(ts_id)
-            self.write_log(f"[DB] Deleted timesheet ID {ts_id}")
+            for item in selected:
+                values = self.timesheets_tree.item(item, "values")
+                ts_id = int(values[0])
+                models.delete_timesheet(ts_id)
+                self.write_log(f"[DB] Deleted timesheet ID {ts_id}")
             self.load_timesheets()
 
     # ==============================================================================
@@ -760,17 +1116,40 @@ class TimesheetAppGUI:
     # Solver execution helper
     # ==============================================================================
     def run_solver_background(self, solver_input: sat_solver.SolverInput, callback_success):
-        """Runs the CP-SAT solver in a background thread to prevent UI freezing."""
-        self.write_log(f"[Solver] Starting solve calculations ({solver_input.mode} mode)...")
+        """Runs the CP-SAT solver in a background thread and updates the UI progress indicators."""
+        self.write_log(f"[Solver] Starting CP-SAT calculations ({solver_input.mode} mode)...")
+        
+        # Start and show modern progress bar
+        self.progress_bar.pack(fill=tk.X, pady=(0, 10), after=self.meta_frame)
+        self.progress_bar.start()
+        self.meta_lbl.configure(text="CP-SAT Solver calculating optimal shift distribution... please wait.")
+        self.status_badge.pack_forget()
+        
+        # Disable action buttons to prevent concurrent calculations
+        self.btn_single_solve.configure(state="disabled")
+        self.btn_batch_solve.configure(state="disabled")
+        self.btn_finalize.configure(state="disabled")
+        self.btn_revert.configure(state="disabled")
         
         def run():
             try:
                 result = sat_solver.solve(solver_input)
-                self.root.after(0, lambda: callback_success(result))
+                self.root.after(0, lambda: handle_done(result))
             except Exception as e:
                 self.write_log(f"[Error] Solver runtime exception: {e}")
-                self.root.after(0, lambda: messagebox.showerror("Solver Error", f"Solver encountered an exception:\n{e}"))
+                self.root.after(0, lambda: handle_error(e))
                 
+        def handle_done(result):
+            self.progress_bar.stop()
+            self.progress_bar.pack_forget()
+            callback_success(result)
+            
+        def handle_error(e):
+            self.progress_bar.stop()
+            self.progress_bar.pack_forget()
+            messagebox.showerror("Solver Error", f"Solver encountered an exception:\n{e}")
+            self.load_timesheets()
+            
         threading.Thread(target=run, daemon=True).start()
 
     # ==============================================================================
@@ -783,12 +1162,11 @@ class TimesheetAppGUI:
         values = self.timesheets_tree.item(selected[0], "values")
         ts_id = int(values[0])
         
-        # Load timesheet
         ts = models.get_timesheet_with_entries(ts_id)
         if not ts:
             return
             
-        # Re-run overwrite confirmation
+        # Overwrite confirmation
         if ts["entries"]:
             confirm_overwrite = messagebox.askyesno(
                 "Overwrite Confirmation",
@@ -852,6 +1230,7 @@ class TimesheetAppGUI:
             
             if result.status == 'failed':
                 messagebox.showerror("Solver Failed", "Could not find a feasible shift schedule satisfying constraints.")
+                self.load_timesheets()
                 return
                 
             if result.status == 'nearest':
@@ -864,13 +1243,13 @@ class TimesheetAppGUI:
                     icon="question"
                 )
                 if not accept:
+                    self.load_timesheets()
                     return
             
             # Save results
             schedule = result.schedules[ts["employee_id"]]
             db_entries = []
             for entry in schedule:
-                # convert DayEntry to dict
                 work_date = f"{ts['year']}-{ts['month']:02d}-{entry.day:02d}"
                 break_str = "00:30" if entry.break_minutes == 30 else "00:00"
                 db_entries.append({
@@ -972,6 +1351,7 @@ class TimesheetAppGUI:
             
             if result.status == 'failed':
                 messagebox.showerror("Solver Failed", "Could not find a feasible distribution satisfying constraints.")
+                self.load_timesheets()
                 return
                 
             if result.status == 'nearest':
@@ -983,6 +1363,7 @@ class TimesheetAppGUI:
                     icon="question"
                 )
                 if not accept:
+                    self.load_timesheets()
                     return
                     
             # Save results for all active drivers
@@ -1038,31 +1419,38 @@ class TimesheetAppGUI:
         self.manual_edit_dialog(ts, date_str, start_time, end_time, break_dur, hours_str, remarks)
 
     def manual_edit_dialog(self, ts: dict, date_str: str, start: str, end: str, break_dur: str, hours_str: str, remarks_str: str):
-        dialog = tk.Toplevel(self.root)
+        dialog = ctk.CTkToplevel(self.root)
         dialog.title(f"Edit Shift - {date_str}")
-        dialog.geometry("340x260")
+        dialog.geometry("400x320")
         dialog.resizable(False, False)
+        dialog.transient(self.root)
         dialog.grab_set()
         
-        ttk.Label(dialog, text="Start Time (HH:MM):").grid(row=0, column=0, padx=10, pady=8, sticky=tk.W)
+        main_frame = ctk.CTkFrame(dialog, fg_color="transparent")
+        main_frame.pack(fill=ctk.BOTH, expand=True, padx=15, pady=15)
+        
+        ctk.CTkLabel(main_frame, text="Start Time (HH:MM):").grid(row=0, column=0, padx=10, pady=6, sticky=tk.W)
         start_var = tk.StringVar(value=start)
-        ttk.Entry(dialog, textvariable=start_var, width=25).grid(row=0, column=1, padx=10, pady=8)
+        ctk.CTkEntry(main_frame, textvariable=start_var, width=180).grid(row=0, column=1, padx=10, pady=6)
         
-        ttk.Label(dialog, text="End Time (HH:MM):").grid(row=1, column=0, padx=10, pady=8, sticky=tk.W)
+        ctk.CTkLabel(main_frame, text="End Time (HH:MM):").grid(row=1, column=0, padx=10, pady=6, sticky=tk.W)
         end_var = tk.StringVar(value=end)
-        ttk.Entry(dialog, textvariable=end_var, width=25).grid(row=1, column=1, padx=10, pady=8)
+        ctk.CTkEntry(main_frame, textvariable=end_var, width=180).grid(row=1, column=1, padx=10, pady=6)
         
-        ttk.Label(dialog, text="Break (HH:MM):").grid(row=2, column=0, padx=10, pady=8, sticky=tk.W)
+        ctk.CTkLabel(main_frame, text="Break (HH:MM):").grid(row=2, column=0, padx=10, pady=6, sticky=tk.W)
         break_var = tk.StringVar(value=break_dur if break_dur else "00:00")
-        ttk.Entry(dialog, textvariable=break_var, width=25).grid(row=2, column=1, padx=10, pady=8)
+        ctk.CTkEntry(main_frame, textvariable=break_var, width=180).grid(row=2, column=1, padx=10, pady=6)
         
-        ttk.Label(dialog, text="Hours Worked:").grid(row=3, column=0, padx=10, pady=8, sticky=tk.W)
+        ctk.CTkLabel(main_frame, text="Hours Worked:").grid(row=3, column=0, padx=10, pady=6, sticky=tk.W)
         hours_var = tk.StringVar(value=hours_str.replace(",", "."))
-        ttk.Entry(dialog, textvariable=hours_var, width=25).grid(row=3, column=1, padx=10, pady=8)
+        ctk.CTkEntry(main_frame, textvariable=hours_var, width=180).grid(row=3, column=1, padx=10, pady=6)
         
-        ttk.Label(dialog, text="Remarks:").grid(row=4, column=0, padx=10, pady=8, sticky=tk.W)
+        ctk.CTkLabel(main_frame, text="Remarks:").grid(row=4, column=0, padx=10, pady=6, sticky=tk.W)
         remarks_var = tk.StringVar(value=remarks_str)
-        ttk.Entry(dialog, textvariable=remarks_var, width=25).grid(row=4, column=1, padx=10, pady=8)
+        ctk.CTkEntry(main_frame, textvariable=remarks_var, width=180).grid(row=4, column=1, padx=10, pady=6)
+        
+        warning_lbl = ctk.CTkLabel(main_frame, text="", text_color="#e53e3e", font=("Segoe UI", 10))
+        warning_lbl.grid(row=5, column=0, columnspan=2, pady=(5, 5))
         
         def save():
             h_str = hours_var.get().strip()
@@ -1079,7 +1467,7 @@ class TimesheetAppGUI:
                 if hours_val < 0.0:
                     raise ValueError()
             except:
-                messagebox.showerror("Error", "Hours worked must be a valid positive number.")
+                warning_lbl.configure(text="Hours worked must be a valid positive number.")
                 return
                 
             # If hours > 0, times must be HH:MM
@@ -1090,7 +1478,7 @@ class TimesheetAppGUI:
                         if len(parts) != 2 or not (0 <= int(parts[0]) <= 23) or not (0 <= int(parts[1]) <= 59):
                             raise ValueError()
                     except:
-                        messagebox.showerror("Error", "Times must be in HH:MM format.")
+                        warning_lbl.configure(text="Times must be in HH:MM format.")
                         return
             else:
                 st = ""
@@ -1098,10 +1486,8 @@ class TimesheetAppGUI:
                 br = ""
                 
             # Update local dict first for validation checks
-            # convert date back to ISO format
             dt = datetime.strptime(date_str, "%d.%m.%Y")
             iso_date = dt.strftime("%Y-%m-%d")
-            day_num = dt.day
             
             new_entries = []
             for entry in ts["entries"]:
@@ -1156,7 +1542,6 @@ class TimesheetAppGUI:
                 if cross_city_active_day == 1:
                     combined_active.append(1)
                 else:
-                    # check new entries
                     is_active = 0
                     for e in new_entries:
                         e_day = int(e["work_date"].split('-')[2])
@@ -1180,22 +1565,29 @@ class TimesheetAppGUI:
                     return
 
             # ---------------------------------------------------------
-            # Lock vs Redistribute Prompt
+            # Lock vs Redistribute Dialog
             # ---------------------------------------------------------
-            prompt_dialog = tk.Toplevel(self.root)
+            prompt_dialog = ctk.CTkToplevel(self.root)
             prompt_dialog.title("Save Action")
-            prompt_dialog.geometry("380x160")
+            prompt_dialog.geometry("400x180")
             prompt_dialog.resizable(False, False)
+            prompt_dialog.transient(dialog)
             prompt_dialog.grab_set()
             
-            ttk.Label(
+            ctk.CTkLabel(
                 prompt_dialog,
                 text="How would you like to save these edits?",
-                font=("Segoe UI", 10, "bold")
-            ).pack(pady=10)
+                font=("Segoe UI", 12, "bold")
+            ).pack(pady=(15, 10))
+            
+            ctk.CTkLabel(
+                prompt_dialog,
+                text="Lock only edits this driver. Redistribute recalculates other schedules.",
+                font=("Segoe UI", 10, "italic"),
+                text_color="#a0aec0" if ctk.get_appearance_mode() == "Dark" else "#718096"
+            ).pack(pady=(0, 15))
             
             def lock_only():
-                # Lock timesheet and save directly
                 models.save_daily_entries(ts["id"], new_entries)
                 models.set_distribution_lock(ts["id"], True)
                 self.write_log(f"[DB] Saved edits and locked timesheet ID {ts['id']}")
@@ -1204,29 +1596,45 @@ class TimesheetAppGUI:
                 dialog.destroy()
                 
             def apply_all():
-                # Save edits, treat driver as a fixed constraint, and solve for all other Draft, non-locked timesheets
                 models.save_daily_entries(ts["id"], new_entries)
                 self.write_log(f"[DB] Saved edits for timesheet ID {ts['id']}. Triggering redistribution...")
                 prompt_dialog.destroy()
                 dialog.destroy()
                 
-                # Re-run batch solver (will automatically treat this driver as locked or load their schedule as fixed constraint)
+                # Re-run batch solver treating this driver as fixed constraint
                 self.solve_batch_timesheets_with_fixed_driver(ts, new_entries)
                 
-            btn_frame = ttk.Frame(prompt_dialog)
-            btn_frame.pack(pady=10)
+            btn_frame = ctk.CTkFrame(prompt_dialog, fg_color="transparent")
+            btn_frame.pack(pady=5)
             
-            ttk.Button(btn_frame, text="Lock Driver Only", command=lock_only).pack(side=tk.LEFT, padx=10)
-            ttk.Button(btn_frame, text="Apply & Redistribute Others", command=apply_all).pack(side=tk.LEFT, padx=10)
-            ttk.Button(btn_frame, text="Cancel", command=prompt_dialog.destroy).pack(side=tk.LEFT, padx=10)
+            ctk.CTkButton(
+                btn_frame, 
+                text="Lock Driver Only", 
+                fg_color="#4a5568", 
+                hover_color="#2d3748",
+                command=lock_only
+            ).pack(side=tk.LEFT, padx=10)
+            
+            ctk.CTkButton(
+                btn_frame, 
+                text="Apply & Redistribute", 
+                fg_color="#2b6cb0", 
+                hover_color="#1f538d",
+                command=apply_all
+            ).pack(side=tk.LEFT, padx=10)
+            
+            ctk.CTkButton(
+                btn_frame, 
+                text="Cancel", 
+                fg_color="transparent", 
+                text_color="#e53e3e", 
+                hover_color="#fed7d7" if ctk.get_appearance_mode() == "Light" else "#742a2a",
+                command=prompt_dialog.destroy
+            ).pack(side=tk.LEFT, padx=10)
 
-        ttk.Button(dialog, text="Save", command=save).grid(row=5, column=0, columnspan=2, pady=15)
+        ctk.CTkButton(main_frame, text="Save", command=save, width=140).grid(row=6, column=0, columnspan=2, pady=15)
 
     def solve_batch_timesheets_with_fixed_driver(self, edited_ts: dict, edited_entries: list):
-        """
-        Runs batch redistribution for all Draft, non-locked timesheets in the city,
-        treating the edited driver's timesheet as a locked (read-only) constraint.
-        """
         city_id = edited_ts["city_id"]
         year = edited_ts["year"]
         month = edited_ts["month"]
@@ -1240,8 +1648,6 @@ class TimesheetAppGUI:
         # Fetch all Draft timesheets in this city/month
         all_timesheets = models.get_timesheets(city_id=city_id, year=year, month=month, status="Draft")
         
-        # Treat the edited driver as LOCKED for the solver run, even if database lock flag is False
-        # (This is the "Apply to all workers" behavior)
         active_sheets = [ts for ts in all_timesheets if not ts["is_distribution_locked"] and ts["id"] != edited_ts["id"]]
         locked_sheets = [ts for ts in all_timesheets if ts["is_distribution_locked"] or ts["id"] == edited_ts["id"]]
         

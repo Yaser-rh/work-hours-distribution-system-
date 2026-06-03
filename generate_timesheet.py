@@ -21,8 +21,12 @@ def main():
     # Initialize SQLite database file and tables
     initialize_database()
     
-    # Boot up Tkinter Desktop GUI
-    root = tk.Tk()
+    # Boot up CustomTkinter Desktop GUI
+    import customtkinter as ctk
+    ctk.set_appearance_mode("System")
+    ctk.set_default_color_theme("blue")
+    
+    root = ctk.CTk()
     app = TimesheetAppGUI(root)
     root.mainloop()
 
