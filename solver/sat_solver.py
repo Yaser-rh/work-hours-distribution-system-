@@ -1,4 +1,5 @@
 import time
+import math
 from dataclasses import dataclass, field
 from typing import List, Dict, Any, Optional
 from ortools.sat.python import cp_model
@@ -188,7 +189,7 @@ def solve(solver_input: SolverInput) -> SolverResult:
     solver_a = cp_model.CpSolver()
     solver_a.parameters.max_time_in_seconds = 10.0
     solver_a.parameters.num_search_workers = 8
-    solver_a.parameters.relative_gap_limit = 0.05
+    solver_a.parameters.relative_gap_limit = 0.00
     
     status_a = solver_a.Solve(model_a)
     
@@ -211,7 +212,7 @@ def solve(solver_input: SolverInput) -> SolverResult:
     solver_b = cp_model.CpSolver()
     solver_b.parameters.max_time_in_seconds = 10.0
     solver_b.parameters.num_search_workers = 8
-    solver_b.parameters.relative_gap_limit = 0.05
+    solver_b.parameters.relative_gap_limit = 0.00
     
     status_b = solver_b.Solve(model_b)
     
@@ -366,12 +367,35 @@ def _build_solver_vars_and_constraints(model: cp_model.CpModel,
         for i in range(len(global_active) - 6):
             model.Add(sum(global_active[i:i+7]) <= 6)
 
+        # 4. Weekly Working Limits (Hybrid approach)
+        avg_active_days = d_spec.target_units / 12.0
+        avg_weekly_days = (avg_active_days / num_days) * 7.0
+        if avg_weekly_days <= 4.0:
+            max_weekly_days = min(6, int(math.ceil(avg_weekly_days)) + 1)
+            min_weekly_days = max(0, int(math.floor(avg_weekly_days)) - 1)
+            
+            # Apply sliding 7-day window constraints (fully within the month)
+            for d in range(1, num_days - 5):
+                model.Add(sum(active_var[w, day] for day in range(d, d + 7)) <= max_weekly_days)
+                model.Add(sum(active_var[w, day] for day in range(d, d + 7)) >= min_weekly_days)
+
     # ==============================================================================
     # Objective Formulation
     # ==============================================================================
-    alpha = 1   # weight of half-hour penalty
-    beta = 10   # weight of staggering/overlap penalty
+    alpha = 1    # weight of half-hour penalty
+    beta = 10    # weight of staggering/overlap penalty
     gamma = 1000 # weight of target deviation in Phase B
+    delta = 10000 # weight of uncovered slots penalty (Option B)
+    eta = 10     # weight of daily distribution penalty (Hybrid approach)
+
+    # Calculate baseline coverage from locked and existing drivers
+    baseline_coverage = {}
+    for d in range(1, num_days + 1):
+        baseline_coverage[d] = {}
+        locked_day = locked_coverage.get(d, {})
+        day_cov = solver_input.existing_coverage.get(d, {})
+        for t in range(city_start, city_end):
+            baseline_coverage[d][t] = locked_day.get(t, 0) + day_cov.get(t, 0)
 
     # 1. Half-hour penalty
     half_hour_penalty = sum(is_half_var[w, d] for w in all_active_driver_ids for d in range(1, num_days + 1))
@@ -402,11 +426,41 @@ def _build_solver_vars_and_constraints(model: cp_model.CpModel,
             batch_penalties.append(max_cov)
         staggering_penalty = sum(batch_penalties)
 
+    # 3. Daily distribution penalty (Hybrid approach)
+    total_active_target = sum(d.target_units for d in solver_input.drivers)
+    total_baseline_units = sum(baseline_coverage[d][t] for d in range(1, num_days + 1) for t in range(city_start, city_end))
+    total_monthly_units = total_active_target + total_baseline_units
+    ideal_daily_units = total_monthly_units // num_days
+
+    daily_deviations = []
+    for d in range(1, num_days + 1):
+        daily_units = sum(hours_var[w, d] for w in all_active_driver_ids)
+        baseline_units = sum(baseline_coverage[d][t] for t in range(city_start, city_end))
+        total_daily_units = daily_units + baseline_units
+        
+        dev_var = model.NewIntVar(0, 48 * len(all_active_driver_ids) + 48, f"daily_dev_{d}")
+        model.Add(total_daily_units - ideal_daily_units <= dev_var)
+        model.Add(ideal_daily_units - total_daily_units <= dev_var)
+        daily_deviations.append(dev_var)
+        
+    daily_distribution_penalty = sum(daily_deviations)
+
+    # 4. Uncovered slots penalty (Option B - Soft Constraint)
+    uncovered_penalty_list = []
+    for d in range(1, num_days + 1):
+        for t in range(city_start, city_end):
+            u_var = model.NewBoolVar(f"uncovered_{d}_{t}")
+            active_covers = [covers_var[w, d, t] for w in all_active_driver_ids]
+            # baseline + active + uncovered >= 1
+            model.Add(baseline_coverage[d][t] + sum(active_covers) + u_var >= 1)
+            uncovered_penalty_list.append(u_var)
+    uncovered_penalty = sum(uncovered_penalty_list)
+
     if exact:
-        model.Minimize(alpha * half_hour_penalty + beta * staggering_penalty)
+        model.Minimize(alpha * half_hour_penalty + beta * staggering_penalty + eta * daily_distribution_penalty + delta * uncovered_penalty)
     else:
         dev_penalty = sum(deviation_var[w] for w in all_active_driver_ids)
-        model.Minimize(alpha * half_hour_penalty + beta * staggering_penalty + gamma * dev_penalty)
+        model.Minimize(alpha * half_hour_penalty + beta * staggering_penalty + eta * daily_distribution_penalty + delta * uncovered_penalty + gamma * dev_penalty)
 
     return {
         'active_var': active_var,

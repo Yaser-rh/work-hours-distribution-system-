@@ -317,3 +317,46 @@ def test_locked_entries_remain_unchanged():
     day5_entry_driver1 = schedule1[4]
     if day5_entry_driver1.hours > 0.0:
         assert day5_entry_driver1.start_time != "08:00"
+
+
+def test_istanbul_hybrid_distribution():
+    # 3 active drivers in batch mode, target 80h (160 units) each.
+    # Checks that their work days are spread out across all weeks of the month.
+    drivers = [
+        sat_solver.DriverSpec(employee_id=101, target_units=160, name="Driver 1"),
+        sat_solver.DriverSpec(employee_id=102, target_units=160, name="Driver 2"),
+        sat_solver.DriverSpec(employee_id=103, target_units=160, name="Driver 3")
+    ]
+    
+    solver_input = sat_solver.SolverInput(
+        drivers=drivers,
+        city_start=16,
+        city_end=44,
+        num_days=30,
+        prev_month_boundary={},
+        cross_city_active={},
+        existing_coverage={},
+        locked_entries={},
+        mode='batch'
+    )
+    
+    result = sat_solver.solve(solver_input)
+    assert result.status == 'exact'
+    
+    # Check each driver's distribution
+    for emp_id in [101, 102, 103]:
+        schedule = result.schedules[emp_id]
+        
+        # Verify that in each 7-day week, the driver works at least 1 day and at most 5 days
+        weeks = [
+            schedule[0:7],   # Week 1
+            schedule[7:14],  # Week 2
+            schedule[14:21], # Week 3
+            schedule[21:28]  # Week 4
+        ]
+        for w_idx, week in enumerate(weeks):
+            active_days = sum(1 for entry in week if entry.hours > 0.0)
+            # Must work at least 1 day and at most 5 days in each week
+            assert active_days >= 1, f"Driver {emp_id} has no active days in week {w_idx + 1}"
+            assert active_days <= 5, f"Driver {emp_id} has too many active days ({active_days}) in week {w_idx + 1}"
+
