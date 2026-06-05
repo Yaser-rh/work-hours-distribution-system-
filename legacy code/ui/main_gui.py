@@ -525,14 +525,17 @@ class TimesheetAppGUI:
                 warning_lbl.configure(text="All fields are required.")
                 return
             
-            if values:  # Edit Mode
-                models.update_employee(int(values[0]), name, personal_id)
-                self.write_log(f"[DB] Updated employee {name} (ID: {personal_id})")
-            else:  # Add Mode
-                models.add_employee(name, personal_id)
-                self.write_log(f"[DB] Added employee {name} (ID: {personal_id})")
-            self.refresh_all_views()
-            dialog.destroy()
+            try:
+                if values:  # Edit Mode
+                    models.update_employee(int(values[0]), name, personal_id)
+                    self.write_log(f"[DB] Updated employee {name} (ID: {personal_id})")
+                else:  # Add Mode
+                    models.add_employee(name, personal_id)
+                    self.write_log(f"[DB] Added employee {name} (ID: {personal_id})")
+                self.refresh_all_views()
+                dialog.destroy()
+            except sqlite3.IntegrityError:
+                warning_lbl.configure(text="A driver with this Personal ID already exists.")
 
         ctk.CTkButton(main_frame, text="Save", command=save, width=140).grid(row=3, column=0, columnspan=2, pady=15)
 
@@ -564,8 +567,8 @@ class TimesheetAppGUI:
         timesheets_frame = self.tabview.tab("Timesheets")
         
         # Grid weights to make side-by-side frames scale nicely
-        timesheets_frame.columnconfigure(0, weight=1)
-        timesheets_frame.columnconfigure(1, weight=1)
+        timesheets_frame.columnconfigure(0, weight=4) # 40% width for left list
+        timesheets_frame.columnconfigure(1, weight=5) # 60% width for right details
         timesheets_frame.rowconfigure(0, weight=1)
         
         # LEFT: List Panel Card
@@ -576,20 +579,20 @@ class TimesheetAppGUI:
         filter_frame = ctk.CTkFrame(self.left_panel, fg_color="transparent")
         filter_frame.pack(fill=tk.X, padx=15, pady=(15, 10))
         
-        ctk.CTkLabel(filter_frame, text="City:").pack(side=tk.LEFT, padx=(0, 5))
+        ctk.CTkLabel(filter_frame, text="City:", font=("Segoe UI", 11, "bold")).pack(side=tk.LEFT, padx=(0, 5))
         self.filter_city_menu = ctk.CTkOptionMenu(
             filter_frame, 
             values=["All Cities"], 
-            width=130,
+            width=120,
             command=lambda val: self.load_timesheets()
         )
-        self.filter_city_menu.pack(side=tk.LEFT, padx=(0, 15))
+        self.filter_city_menu.pack(side=tk.LEFT, padx=(0, 10))
         
-        ctk.CTkLabel(filter_frame, text="Month:").pack(side=tk.LEFT, padx=(0, 5))
+        ctk.CTkLabel(filter_frame, text="Month:", font=("Segoe UI", 11, "bold")).pack(side=tk.LEFT, padx=(0, 5))
         self.filter_month_menu = ctk.CTkOptionMenu(
             filter_frame, 
             values=["All Months"], 
-            width=120,
+            width=110,
             command=lambda val: self.load_timesheets()
         )
         self.filter_month_menu.pack(side=tk.LEFT)
@@ -598,68 +601,100 @@ class TimesheetAppGUI:
         list_tree_frame = ctk.CTkFrame(self.left_panel, fg_color="transparent")
         list_tree_frame.pack(fill=tk.BOTH, expand=True, padx=15, pady=(0, 10))
         
-        ts_cols = ("ID", "Driver", "City", "Month/Year", "Target Hours", "Status", "Locked")
-        self.timesheets_tree = ttk.Treeview(list_tree_frame, columns=ts_cols, show="headings", selectmode="extended")
-        for col in ts_cols:
-            self.timesheets_tree.heading(col, text=col)
-        self.timesheets_tree.column("ID", width=40, stretch=False)
-        self.timesheets_tree.column("Driver", width=120)
-        self.timesheets_tree.column("City", width=100)
-        self.timesheets_tree.column("Month/Year", width=90, anchor=tk.CENTER)
-        self.timesheets_tree.column("Target Hours", width=90, anchor=tk.CENTER)
-        self.timesheets_tree.column("Status", width=80, anchor=tk.CENTER)
-        self.timesheets_tree.column("Locked", width=60, anchor=tk.CENTER)
+        self.timesheets_tree = ttk.Treeview(
+            list_tree_frame, 
+            columns=("ID", "City", "Target Hours", "Status", "Locked"), 
+            show="tree headings", 
+            selectmode="extended"
+        )
+        self.timesheets_tree.heading("#0", text="Driver / Month")
+        self.timesheets_tree.column("#0", width=180, stretch=True)
+        self.timesheets_tree.heading("ID", text="ID")
+        self.timesheets_tree.column("ID", width=40, stretch=False, anchor=tk.CENTER)
+        self.timesheets_tree.heading("City", text="City")
+        self.timesheets_tree.column("City", width=100, stretch=True)
+        self.timesheets_tree.heading("Target Hours", text="Target Hours")
+        self.timesheets_tree.column("Target Hours", width=90, stretch=False, anchor=tk.CENTER)
+        self.timesheets_tree.heading("Status", text="Status")
+        self.timesheets_tree.column("Status", width=80, stretch=False, anchor=tk.CENTER)
+        self.timesheets_tree.heading("Locked", text="Locked")
+        self.timesheets_tree.column("Locked", width=60, stretch=False, anchor=tk.CENTER)
         
-        # Status styling colors
         self.timesheets_tree.tag_configure("draft", foreground="#3182ce")
         self.timesheets_tree.tag_configure("finalized", foreground="#38a169")
         self.timesheets_tree.tag_configure("locked", foreground="#dd6b20")
         
         ts_scrollbar = ctk.CTkScrollbar(list_tree_frame, command=self.timesheets_tree.yview)
         self.timesheets_tree.configure(yscrollcommand=ts_scrollbar.set)
-        
         self.timesheets_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         ts_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
         self.timesheets_tree.bind("<<TreeviewSelect>>", self.on_timesheet_select)
         
         # Left Actions Buttons Frame
         la_frame = ctk.CTkFrame(self.left_panel, fg_color="transparent")
         la_frame.pack(fill=tk.X, padx=15, pady=(0, 15))
+        la_frame.columnconfigure(0, weight=1)
+        la_frame.columnconfigure(1, weight=1)
         
         ctk.CTkButton(
             la_frame, 
             text="+ New Timesheet...", 
-            width=135,
             fg_color="#1a365d", 
             hover_color="#2b6cb0",
             command=self.new_timesheet_dialog
-        ).pack(side=tk.LEFT, padx=(0, 10))
+        ).grid(row=0, column=0, padx=(0, 5), pady=(0, 5), sticky="ew")
         
         ctk.CTkButton(
             la_frame, 
-            text="Delete Timesheet", 
-            width=130,
+            text="Delete Selected", 
             fg_color="#742a2a", 
             hover_color="#9b2c2c",
             command=self.delete_timesheet
-        ).pack(side=tk.LEFT)
+        ).grid(row=0, column=1, padx=(5, 0), pady=(0, 5), sticky="ew")
         
-        self.btn_export_word = ctk.CTkButton(
+        ctk.CTkButton(
             la_frame, 
-            text="Export Word (.docx)", 
-            width=150,
-            fg_color="#2c3e50",
-            hover_color="#34495e",
-            command=self.export_timesheet
-        )
-        self.btn_export_word.pack(side=tk.RIGHT)
+            text="Distribute Selected", 
+            fg_color="#3182ce", 
+            hover_color="#2b6cb0",
+            command=self.solve_selected_timesheets_batch
+        ).grid(row=1, column=0, padx=(0, 5), pady=(5, 0), sticky="ew")
         
-        # RIGHT: Detail & Grid Preview Panel Card
-        self.detail_frame = ctk.CTkFrame(timesheets_frame, corner_radius=12)
-        self.detail_frame.grid(row=0, column=1, sticky="nsew", padx=(10, 0), pady=10)
+        ctk.CTkButton(
+            la_frame, 
+            text="Export Selected", 
+            fg_color="#2c3e50", 
+            hover_color="#34495e",
+            command=lambda: self.export_timesheet()
+        ).grid(row=1, column=1, padx=(5, 0), pady=(5, 0), sticky="ew")
+        
+        # RIGHT: Detail & Actions Panel Card
+        self.right_panel = ctk.CTkFrame(timesheets_frame, corner_radius=12)
+        self.right_panel.grid(row=0, column=1, sticky="nsew", padx=(10, 0), pady=10)
+        
+        # Placeholder view
+        self.placeholder_frame = ctk.CTkFrame(self.right_panel, fg_color="transparent")
+        self.placeholder_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
+        
+        ctk.CTkLabel(
+            self.placeholder_frame, 
+            text="No Timesheet Selected", 
+            font=("Segoe UI", 16, "bold")
+        ).pack(expand=True, pady=(120, 10))
+        
+        ctk.CTkLabel(
+            self.placeholder_frame, 
+            text="Select a timesheet from the list on the left to view daily shifts,\nrun shift distribution solvers, edit shifts manually, or export to Word.", 
+            font=("Segoe UI", 11, "italic"),
+            text_color="#718096"
+        ).pack(expand=True, pady=(0, 120))
+        
+        # Details container (hidden by default)
+        self.details_container = ctk.CTkFrame(self.right_panel, fg_color="transparent")
         
         # Detail Header metadata label + Status Badge
-        self.meta_frame = ctk.CTkFrame(self.detail_frame, fg_color="transparent")
+        self.meta_frame = ctk.CTkFrame(self.details_container, fg_color="transparent")
         self.meta_frame.pack(fill=tk.X, padx=15, pady=(15, 5))
         
         self.meta_lbl = ctk.CTkLabel(
@@ -676,14 +711,12 @@ class TimesheetAppGUI:
             corner_radius=6, 
             height=22
         )
-        # Packed dynamically when selection updates
         
         # Loading/Solving progress indicator
-        self.progress_bar = ctk.CTkProgressBar(self.detail_frame, mode="indeterminate", height=6)
-        # Packed dynamically during solver run
+        self.progress_bar = ctk.CTkProgressBar(self.details_container, mode="indeterminate", height=6)
         
         # Daily Grid Frame
-        grid_frame = ctk.CTkFrame(self.detail_frame, fg_color="transparent")
+        grid_frame = ctk.CTkFrame(self.details_container, fg_color="transparent")
         grid_frame.pack(fill=tk.BOTH, expand=True, padx=15, pady=5)
         
         grid_cols = ("Date", "Start Time", "End Time", "Break", "Hours Worked", "Remarks")
@@ -705,14 +738,14 @@ class TimesheetAppGUI:
         self.grid_tree.bind("<Double-1>", self.on_grid_double_click)
         
         # Detail Actions Frame
-        self.da_frame = ctk.CTkFrame(self.detail_frame, fg_color="transparent")
+        self.da_frame = ctk.CTkFrame(self.details_container, fg_color="transparent")
         self.da_frame.pack(fill=tk.X, padx=15, pady=(5, 15))
         
         self.btn_single_solve = ctk.CTkButton(
             self.da_frame, 
             text="Distribute (Single)", 
             width=135,
-            command=self.solve_single_timesheet
+            command=lambda: self.solve_single_timesheet()
         )
         self.btn_single_solve.pack(side=tk.LEFT, padx=(0, 10))
         
@@ -720,7 +753,7 @@ class TimesheetAppGUI:
             self.da_frame, 
             text="Distribute All (City)", 
             width=140,
-            command=self.solve_batch_timesheets
+            command=lambda: self.solve_batch_timesheets()
         )
         self.btn_batch_solve.pack(side=tk.LEFT)
         
@@ -730,7 +763,7 @@ class TimesheetAppGUI:
             width=110,
             fg_color="#4a5568",
             hover_color="#2d3748",
-            command=self.revert_timesheet
+            command=lambda: self.revert_timesheet()
         )
         self.btn_revert.pack(side=tk.RIGHT)
         
@@ -740,9 +773,19 @@ class TimesheetAppGUI:
             width=130,
             fg_color="#2f855a",
             hover_color="#22543d",
-            command=self.finalize_timesheet
+            command=lambda: self.finalize_timesheet()
         )
         self.btn_finalize.pack(side=tk.RIGHT, padx=(0, 10))
+        
+        self.btn_export_word_detail = ctk.CTkButton(
+            self.da_frame,
+            text="Export Word",
+            width=110,
+            fg_color="#2c3e50",
+            hover_color="#34495e",
+            command=lambda: self.export_timesheet()
+        )
+        self.btn_export_word_detail.pack(side=tk.RIGHT, padx=(0, 10))
         
         # Refresh combinations
         self.refresh_timesheet_combos()
@@ -781,60 +824,125 @@ class TimesheetAppGUI:
             except:
                 pass
                 
-        # Load sheets
+        # Load sheets and group by driver
         self.timesheets_tree.delete(*self.timesheets_tree.get_children())
-        for ts in models.get_timesheets(city_id=city_id, year=year, month=month):
-            locked_str = "Yes" if ts["is_distribution_locked"] else "No"
-            
-            # Row tag selection
-            if ts["status"] == "Finalized":
-                tag = "finalized"
-            elif ts["is_distribution_locked"]:
-                tag = "locked"
-            else:
-                tag = "draft"
-                
-            self.timesheets_tree.insert(
-                "", tk.END, values=(
-                    ts["id"], ts["employee_name"], ts["city_name"],
-                    f"{ts['month']:02d}.{ts['year']}", ts["target_hours"],
-                    ts["status"], locked_str
-                ),
-                tags=(tag,)
-            )
-        self.clear_detail_panel()
-
-    def clear_detail_panel(self):
-        self.meta_lbl.configure(text="No timesheet selected.")
-        self.status_badge.pack_forget()
-        self.grid_tree.delete(*self.grid_tree.get_children())
         
-        # Disable detail buttons
-        self.btn_single_solve.configure(state="disabled")
-        self.btn_batch_solve.configure(state="disabled")
-        self.btn_finalize.configure(state="disabled")
-        self.btn_revert.configure(state="disabled")
+        from collections import defaultdict
+        driver_timesheets = defaultdict(list)
+        for ts in models.get_timesheets(city_id=city_id, year=year, month=month):
+            driver_timesheets[(ts["employee_id"], ts["employee_name"], ts["personal_id"])].append(ts)
+            
+        for (emp_id, emp_name, personal_id), sheets in driver_timesheets.items():
+            # Parent driver node
+            parent_node = self.timesheets_tree.insert(
+                "", tk.END, iid=f"driver_{emp_id}", 
+                text=f"{emp_name} (ID: {personal_id})", 
+                values=("", "", "", "", ""), 
+                open=True
+            )
+            
+            for ts in sheets:
+                locked_str = "Yes" if ts["is_distribution_locked"] else "No"
+                if ts["status"] == "Finalized":
+                    tag = "finalized"
+                elif ts["is_distribution_locked"]:
+                    tag = "locked"
+                else:
+                    tag = "draft"
+                    
+                # Child timesheet row
+                self.timesheets_tree.insert(
+                    parent_node, tk.END, iid=f"ts_{ts['id']}",
+                    text=f"  {ts['month']:02d}.{ts['year']}", 
+                    values=(
+                        ts["id"], ts["city_name"], ts["target_hours"], 
+                        ts["status"], locked_str
+                    ),
+                    tags=(tag,)
+                )
+                
+        # If there is a current selected timesheet, refresh its details and restore selection
+        if hasattr(self, 'current_selected_ts_id') and self.current_selected_ts_id:
+            node_id = f"ts_{self.current_selected_ts_id}"
+            if self.timesheets_tree.exists(node_id):
+                self.timesheets_tree.unbind("<<TreeviewSelect>>")
+                self.timesheets_tree.selection_set(node_id)
+                self.timesheets_tree.focus(node_id)
+                self.timesheets_tree.see(node_id)
+                self.timesheets_tree.bind("<<TreeviewSelect>>", self.on_timesheet_select)
+            ts = models.get_timesheet_with_entries(self.current_selected_ts_id)
+            if ts:
+                self.show_details(self.current_selected_ts_id)
+            else:
+                self.show_placeholder()
+        else:
+            self.show_placeholder()
 
     def on_timesheet_select(self, event):
         selected = self.timesheets_tree.selection()
         if not selected:
-            self.clear_detail_panel()
+            self.show_placeholder()
             return
             
-        values = self.timesheets_tree.item(selected[0], "values")
-        ts_id = int(values[0])
+        # Find if a child node (timesheet) is selected
+        child_ts_id = None
+        for item in selected:
+            parent_id = self.timesheets_tree.parent(item)
+            if parent_id != "": # it's a child row
+                values = self.timesheets_tree.item(item, "values")
+                if values and values[0]:
+                    child_ts_id = int(values[0])
+                    break
+                    
+        if child_ts_id:
+            self.show_details(child_ts_id)
+        else:
+            self.show_placeholder()
+
+    def get_selected_timesheet_ids(self) -> List[int]:
+        selected_items = self.timesheets_tree.selection()
+        ts_ids = []
+        for item in selected_items:
+            # Check if this is a parent (driver) or child (timesheet) row
+            parent_id = self.timesheets_tree.parent(item)
+            if parent_id == "": # It's a parent (driver) node
+                # Add all children timesheets
+                for child in self.timesheets_tree.get_children(item):
+                    values = self.timesheets_tree.item(child, "values")
+                    if values and values[0]:
+                        ts_ids.append(int(values[0]))
+            else: # It's a child node
+                values = self.timesheets_tree.item(item, "values")
+                if values and values[0]:
+                    ts_ids.append(int(values[0]))
+        return list(set(ts_ids))
+
+    def solve_selected_timesheets_batch(self):
+        ts_ids = self.get_selected_timesheet_ids()
+        if not ts_ids:
+            messagebox.showwarning("Select Timesheet", "Please select at least one timesheet to define the city and month context.")
+            return
+        self.solve_batch_timesheets(ts_ids[0])
+
+    def show_placeholder(self):
+        self.details_container.pack_forget()
+        self.placeholder_frame.pack(fill=tk.BOTH, expand=True)
+        self.current_selected_ts_id = None
+
+    def show_details(self, ts_id: int):
+        self.placeholder_frame.pack_forget()
+        self.details_container.pack(fill=tk.BOTH, expand=True)
+        self.current_selected_ts_id = ts_id
         
-        # Load details
         ts = models.get_timesheet_with_entries(ts_id)
         if not ts:
-            self.clear_detail_panel()
+            self.show_placeholder()
             return
             
         self.meta_lbl.configure(
-            text=f"{ts['employee_name']} - {ts['city_name']} ({ts['month']:02d}.{ts['year']}) | Target: {ts['target_hours']}h"
+            text=f"{ts['employee_name']} (ID: {ts['personal_id']}) - {ts['city_name']} ({ts['month']:02d}.{ts['year']}) | Target: {ts['target_hours']}h"
         )
         
-        # Show and style status badge
         self.status_badge.pack_forget()
         is_dark = (ctk.get_appearance_mode() == "Dark")
         if ts["status"] == "Finalized":
@@ -857,10 +965,6 @@ class TimesheetAppGUI:
             )
         self.status_badge.pack(side=tk.LEFT, padx=10)
         
-        # Enable action buttons appropriately
-        self.btn_single_solve.configure(state="normal")
-        self.btn_batch_solve.configure(state="normal")
-        
         if ts["status"] == "Finalized":
             self.btn_finalize.configure(state="disabled")
             self.btn_revert.configure(state="normal")
@@ -872,7 +976,6 @@ class TimesheetAppGUI:
             self.btn_single_solve.configure(state="normal")
             self.btn_batch_solve.configure(state="normal")
             
-        # Load daily entries grid
         self.grid_tree.delete(*self.grid_tree.get_children())
         for entry in ts["entries"]:
             work_date = entry["work_date"]
@@ -892,14 +995,37 @@ class TimesheetAppGUI:
                 )
             )
 
+    def on_grid_double_click(self, event):
+        if not hasattr(self, 'current_selected_ts_id') or not self.current_selected_ts_id:
+            return
+            
+        ts = models.get_timesheet_with_entries(self.current_selected_ts_id)
+        if ts.get("status") == "Finalized":
+            messagebox.showwarning("Edit Blocked", "Finalized timesheets cannot be modified. Revert to Draft first.")
+            return
+
+        selected_grid_idx = self.grid_tree.selection()
+        if not selected_grid_idx:
+            return
+        grid_values = self.grid_tree.item(selected_grid_idx[0], "values")
+        
+        date_str = grid_values[0]
+        start_time = grid_values[1]
+        end_time = grid_values[2]
+        break_dur = grid_values[3]
+        hours_str = grid_values[4]
+        remarks = grid_values[5]
+        
+        self.manual_edit_dialog(ts, date_str, start_time, end_time, break_dur, hours_str, remarks)
+
     # ==============================================================================
     # Timesheet Creation Dialog
     # ==============================================================================
     def new_timesheet_dialog(self):
         dialog = ctk.CTkToplevel(self.root)
-        dialog.title("New Timesheet")
-        dialog.geometry("480x480")
-        dialog.resizable(False, False)
+        dialog.title("Generate Timesheets")
+        dialog.geometry("540x620")
+        dialog.resizable(True, True)
         dialog.transient(self.root)
         dialog.grab_set()
         
@@ -911,121 +1037,176 @@ class TimesheetAppGUI:
             dialog.destroy()
             return
             
-        main_frame = ctk.CTkFrame(dialog, fg_color="transparent")
-        main_frame.pack(fill=ctk.BOTH, expand=True, padx=15, pady=15)
+        # Top Header
+        header_frame = ctk.CTkFrame(dialog, fg_color="transparent")
+        header_frame.pack(fill=tk.X, padx=20, pady=(15, 5))
+        ctk.CTkLabel(header_frame, text="Generate Timesheets in Batch", font=("Segoe UI", 16, "bold")).pack(anchor=tk.W)
         
-        ctk.CTkLabel(main_frame, text="Select Driver(s):").grid(row=0, column=0, padx=10, pady=10, sticky=tk.NW)
+        # Scrollable container for the form inputs
+        scroll_container = ctk.CTkScrollableFrame(dialog, fg_color="transparent")
+        scroll_container.pack(fill=ctk.BOTH, expand=True, padx=15, pady=5)
         
-        # Scrollable list of driver checkboxes
-        drivers_scroll = ctk.CTkScrollableFrame(main_frame, width=220, height=120)
+        # Grid frame inside scroll container
+        form_frame = ctk.CTkFrame(scroll_container, fg_color="transparent")
+        form_frame.pack(fill=ctk.BOTH, expand=True, padx=5, pady=5)
+        
+        ctk.CTkLabel(form_frame, text="Select Driver(s):\n(Check to set hours)", font=("Segoe UI", 11, "bold"), justify=tk.LEFT).grid(row=0, column=0, padx=10, pady=10, sticky=tk.NW)
+        
+        # Scrollable list of driver checkboxes and target hour entry fields
+        drivers_scroll = ctk.CTkScrollableFrame(form_frame, width=280, height=130)
         drivers_scroll.grid(row=0, column=1, padx=10, pady=10, sticky=tk.W)
         
-        self.driver_checkboxes = []
+        self.driver_entries = []
         for d in drivers:
-            cb = ctk.CTkCheckBox(drivers_scroll, text=d["name"])
-            cb.pack(anchor=tk.W, padx=5, pady=5)
-            self.driver_checkboxes.append((d["id"], d["name"], cb))
+            row_frame = ctk.CTkFrame(drivers_scroll, fg_color="transparent")
+            row_frame.pack(fill=tk.X, pady=2)
+            
+            cb = ctk.CTkCheckBox(row_frame, text=f"{d['name']} (ID: {d['personal_id']})", width=200)
+            cb.pack(side=tk.LEFT, padx=5)
+            
+            # Entry for target hours
+            entry = ctk.CTkEntry(row_frame, width=50)
+            entry.insert(0, "80.0")
+            entry.pack(side=tk.RIGHT, padx=5)
+            
+            # Helper to enable/disable entry based on checkbox
+            def make_toggle_callback(c_box=cb, e_box=entry):
+                return lambda: e_box.configure(state="normal" if c_box.get() == 1 else "disabled")
+            
+            cb.configure(command=make_toggle_callback(cb, entry))
+            entry.configure(state="disabled") # default disabled since checkbox is unchecked
+            
+            self.driver_entries.append((d["id"], d["name"], d["personal_id"], cb, entry))
             
         # Select All / Deselect All helpers
-        helper_frame = ctk.CTkFrame(main_frame, fg_color="transparent")
+        helper_frame = ctk.CTkFrame(form_frame, fg_color="transparent")
         helper_frame.grid(row=1, column=1, padx=10, pady=(0, 10), sticky=tk.W)
         
         def select_all():
-            for _, _, cb in self.driver_checkboxes:
+            for _, _, _, cb, entry in self.driver_entries:
                 cb.select()
+                entry.configure(state="normal")
                 
         def deselect_all():
-            for _, _, cb in self.driver_checkboxes:
+            for _, _, _, cb, entry in self.driver_entries:
                 cb.deselect()
+                entry.configure(state="disabled")
                 
         ctk.CTkButton(helper_frame, text="Select All", width=80, height=22, fg_color="#3182ce", text_color="white", hover_color="#2b6cb0", command=select_all).pack(side=tk.LEFT, padx=(0, 10))
         ctk.CTkButton(helper_frame, text="Deselect All", width=90, height=22, fg_color="#4a5568", text_color="white", hover_color="#2d3748", command=deselect_all).pack(side=tk.LEFT)
         
-        ctk.CTkLabel(main_frame, text="Select City:").grid(row=2, column=0, padx=10, pady=10, sticky=tk.W)
+        # Month Selector Checklist (next 12 months)
+        ctk.CTkLabel(form_frame, text="Select Month(s):", font=("Segoe UI", 11, "bold")).grid(row=2, column=0, padx=10, pady=10, sticky=tk.NW)
+        
+        months_scroll = ctk.CTkScrollableFrame(form_frame, width=280, height=110)
+        months_scroll.grid(row=2, column=1, padx=10, pady=10, sticky=tk.W)
+        
+        now_dt = datetime.now()
+        months_list = []
+        for i in range(12):
+            m = (now_dt.month - 1 + i) % 12 + 1
+            y = now_dt.year + (now_dt.month - 1 + i) // 12
+            months_list.append(f"{m:02d}.{y}")
+            
+        self.month_checkboxes = []
+        for m_str in months_list:
+            cb = ctk.CTkCheckBox(months_scroll, text=m_str)
+            # Default check the current month
+            if m_str == now_dt.strftime("%m.%Y"):
+                cb.select()
+            cb.pack(anchor=tk.W, padx=5, pady=3)
+            self.month_checkboxes.append((m_str, cb))
+        
+        ctk.CTkLabel(form_frame, text="Select City:", font=("Segoe UI", 11, "bold")).grid(row=3, column=0, padx=10, pady=10, sticky=tk.W)
         city_names = [c["name"] for c in cities]
-        city_menu = ctk.CTkOptionMenu(main_frame, values=city_names, width=240)
-        city_menu.grid(row=2, column=1, padx=10, pady=10)
+        city_menu = ctk.CTkOptionMenu(form_frame, values=city_names, width=280)
+        city_menu.grid(row=3, column=1, padx=10, pady=10, sticky=tk.W)
         
-        ctk.CTkLabel(main_frame, text="Month & Year (MM.YYYY):").grid(row=3, column=0, padx=10, pady=10, sticky=tk.W)
-        month_var = tk.StringVar(value=datetime.now().strftime("%m.%Y"))
-        ctk.CTkEntry(main_frame, textvariable=month_var, width=240).grid(row=3, column=1, padx=10, pady=10)
+        # Bottom controls - Fixed outside scrollbox so it's always visible!
+        bottom_frame = ctk.CTkFrame(dialog, fg_color="transparent")
+        bottom_frame.pack(fill=tk.X, side=tk.BOTTOM, padx=20, pady=(10, 20))
         
-        ctk.CTkLabel(main_frame, text="Target Hours:").grid(row=4, column=0, padx=10, pady=10, sticky=tk.W)
-        target_var = tk.StringVar(value="80.0")
-        ctk.CTkEntry(main_frame, textvariable=target_var, width=240).grid(row=4, column=1, padx=10, pady=10)
-        
-        warning_lbl = ctk.CTkLabel(main_frame, text="", text_color="#e53e3e", font=("Segoe UI", 10))
-        warning_lbl.grid(row=5, column=0, columnspan=2, pady=(5, 5))
+        warning_lbl = ctk.CTkLabel(bottom_frame, text="", text_color="#e53e3e", font=("Segoe UI", 11))
+        warning_lbl.pack(pady=(0, 10))
         
         def create():
             selected_drivers = []
-            for emp_id, name, cb in self.driver_checkboxes:
+            for emp_id, name, personal_id, cb, entry in self.driver_entries:
                 if cb.get() == 1:
-                    selected_drivers.append((emp_id, name))
+                    target_str = entry.get().strip()
+                    if not target_str:
+                        warning_lbl.configure(text=f"Please specify target hours for {name}.")
+                        return
+                    try:
+                        target_hours = float(target_str.replace(",", "."))
+                        if target_hours % 0.5 != 0:
+                            raise ValueError()
+                    except:
+                        warning_lbl.configure(text=f"Hours for {name} must be a number and multiple of 0.5.")
+                        return
+                    selected_drivers.append((emp_id, name, target_hours))
             
             if not selected_drivers:
                 warning_lbl.configure(text="Please select at least one driver.")
                 return
                 
+            selected_months = []
+            for m_str, cb in self.month_checkboxes:
+                if cb.get() == 1:
+                    selected_months.append(m_str)
+                    
+            if not selected_months:
+                warning_lbl.configure(text="Please select at least one month.")
+                return
+                
             c_name = city_menu.get()
-            m_year = month_var.get().strip()
-            target_str = target_var.get().strip()
-            
-            if not c_name or not m_year or not target_str:
-                warning_lbl.configure(text="All fields are required.")
-                return
-                
-            try:
-                parts = m_year.split('.')
-                month, year = int(parts[0]), int(parts[1])
-                if not (1 <= month <= 12) or year < 2000:
-                    raise ValueError()
-            except:
-                warning_lbl.configure(text="Invalid Month/Year. Use MM.YYYY (e.g. 06.2026).")
-                return
-                
-            # Current or future month restriction
-            now = datetime.now()
-            if year < now.year or (year == now.year and month < now.month):
-                warning_lbl.configure(text="Timesheets can only be for current or future months.")
-                return
-                
-            try:
-                target_hours = float(target_str.replace(",", "."))
-                if target_hours % 0.5 != 0:
-                    raise ValueError("Must be a multiple of 0.5")
-            except:
-                warning_lbl.configure(text="Target hours must be a number and multiple of 0.5.")
-                return
-                
-            # Bounds checking
-            _, num_days = calendar.monthrange(year, month)
-            max_wd = (num_days // 7) * 6 + min(num_days % 7, 6)
-            max_hours_allowed = max_wd * 8.0
-            
-            if target_hours < 10.0 or target_hours > max_hours_allowed:
-                warning_lbl.configure(text=f"Target hours out of bounds [10.0, {max_hours_allowed}].")
+            if not c_name:
+                warning_lbl.configure(text="Please select a city.")
                 return
                 
             city_id = next(c["id"] for c in cities if c["name"] == c_name)
             
+            # Batch validation of limits per month
+            for m_year in selected_months:
+                try:
+                    parts = m_year.split('.')
+                    month, year = int(parts[0]), int(parts[1])
+                except:
+                    continue
+                    
+                _, num_days = calendar.monthrange(year, month)
+                max_wd = (num_days // 7) * 6 + min(num_days % 7, 6)
+                max_hours_allowed = max_wd * 8.0
+                
+                for emp_id, d_name, target_hours in selected_drivers:
+                    if target_hours < 10.0 or target_hours > max_hours_allowed:
+                        warning_lbl.configure(
+                            text=f"Hours {target_hours} for {d_name} out of bounds for {m_year} [10.0, {max_hours_allowed}]."
+                        )
+                        return
+                        
+            # Execute database insertions
             success_count = 0
             fail_count = 0
-            for emp_id, d_name in selected_drivers:
-                try:
-                    models.create_timesheet(emp_id, city_id, year, month, target_hours)
-                    self.write_log(f"[DB] Created timesheet for {d_name} in {c_name} ({m_year})")
-                    success_count += 1
-                except sqlite3.IntegrityError:
-                    self.write_log(f"[DB] Timesheet already exists for {d_name} in {c_name} ({m_year})")
-                    fail_count += 1
-                    
+            for m_year in selected_months:
+                parts = m_year.split('.')
+                month, year = int(parts[0]), int(parts[1])
+                
+                for emp_id, d_name, target_hours in selected_drivers:
+                    try:
+                        models.create_timesheet(emp_id, city_id, year, month, target_hours)
+                        self.write_log(f"[DB] Created timesheet for {d_name} in {c_name} ({m_year}) with {target_hours}h")
+                        success_count += 1
+                    except sqlite3.IntegrityError:
+                        self.write_log(f"[DB] Timesheet already exists for {d_name} in {c_name} ({m_year})")
+                        fail_count += 1
+                        
             self.load_timesheets()
             
             if fail_count > 0:
                 messagebox.showinfo(
                     "Creation Summary", 
-                    f"Created {success_count} timesheets successfully.\n"
+                    f"Generated {success_count} timesheets successfully.\n"
                     f"Skipped {fail_count} timesheets because they already exist."
                 )
             else:
@@ -1033,104 +1214,147 @@ class TimesheetAppGUI:
                 
             dialog.destroy()
                 
-        ctk.CTkButton(main_frame, text="Create", command=create, width=140).grid(row=6, column=0, columnspan=2, pady=15)
+        ctk.CTkButton(bottom_frame, text="Generate Timesheets", command=create, width=180, height=35, font=("Segoe UI", 12, "bold")).pack()
 
     def delete_timesheet(self):
-        selected = self.timesheets_tree.selection()
-        if not selected:
+        ts_ids = self.get_selected_timesheet_ids()
+        if not ts_ids:
             messagebox.showwarning("Select Timesheet", "Please select one or more timesheets to delete.")
             return
         
-        confirm = messagebox.askyesno("Confirm Delete", f"Are you sure you want to delete {len(selected)} selected timesheet(s)?")
+        confirm = messagebox.askyesno("Confirm Delete", f"Are you sure you want to delete {len(ts_ids)} selected timesheet(s)?")
         if confirm:
-            for item in selected:
-                values = self.timesheets_tree.item(item, "values")
-                ts_id = int(values[0])
+            for ts_id in ts_ids:
                 models.delete_timesheet(ts_id)
                 self.write_log(f"[DB] Deleted timesheet ID {ts_id}")
+            if hasattr(self, 'current_selected_ts_id') and self.current_selected_ts_id in ts_ids:
+                self.current_selected_ts_id = None
             self.load_timesheets()
 
-    # ==============================================================================
-    # Finalize, Revert, Export
-    # ==============================================================================
-    def finalize_timesheet(self):
-        selected = self.timesheets_tree.selection()
-        if not selected:
+    def finalize_timesheet(self, ts_ids: Optional[List[int]] = None):
+        if ts_ids is None:
+            ts_ids = self.get_selected_timesheet_ids()
+        if not ts_ids:
+            messagebox.showwarning("Select Timesheet", "Please select one or more timesheets to finalize.")
             return
-        values = self.timesheets_tree.item(selected[0], "values")
-        ts_id = int(values[0])
-        models.update_timesheet_status(ts_id, "Finalized")
-        self.write_log(f"[DB] Finalized timesheet ID {ts_id}")
+        for ts_id in ts_ids:
+            models.update_timesheet_status(ts_id, "Finalized")
+            self.write_log(f"[DB] Finalized timesheet ID {ts_id}")
         self.load_timesheets()
 
-    def revert_timesheet(self):
-        selected = self.timesheets_tree.selection()
-        if not selected:
+    def revert_timesheet(self, ts_ids: Optional[List[int]] = None):
+        if ts_ids is None:
+            ts_ids = self.get_selected_timesheet_ids()
+        if not ts_ids:
+            messagebox.showwarning("Select Timesheet", "Please select one or more timesheets to revert.")
             return
-        values = self.timesheets_tree.item(selected[0], "values")
-        ts_id = int(values[0])
-        models.update_timesheet_status(ts_id, "Draft")
-        self.write_log(f"[DB] Reverted timesheet ID {ts_id} to Draft")
+        for ts_id in ts_ids:
+            models.update_timesheet_status(ts_id, "Draft")
+            self.write_log(f"[DB] Reverted timesheet ID {ts_id} to Draft")
         self.load_timesheets()
 
-    def export_timesheet(self):
-        selected = self.timesheets_tree.selection()
-        if not selected:
-            messagebox.showwarning("Select Timesheet", "Please select a timesheet to export.")
+    def export_timesheet(self, ts_ids: Optional[List[int]] = None):
+        if ts_ids is None:
+            ts_ids = self.get_selected_timesheet_ids()
+        if not ts_ids:
+            messagebox.showwarning("Select Timesheet", "Please select one or more timesheets to export.")
             return
-        values = self.timesheets_tree.item(selected[0], "values")
-        ts_id = int(values[0])
         
-        ts = models.get_timesheet_with_entries(ts_id)
-        if not ts:
-            return
+        if len(ts_ids) == 1:
+            ts_id = ts_ids[0]
+            ts = models.get_timesheet_with_entries(ts_id)
+            if not ts:
+                return
+                
+            clean_name = "".join(c for c in ts["employee_name"] if c.isalnum() or c in (" ", "_", "-")).strip().replace(" ", "_")
+            initial_name = f"timesheet_{clean_name}_{ts['month']:02d}_{ts['year']}.docx"
             
-        clean_name = "".join(c for c in ts["employee_name"] if c.isalnum() or c in (" ", "_", "-")).strip().replace(" ", "_")
-        initial_name = f"timesheet_{clean_name}_{ts['month']:02d}_{ts['year']}.docx"
-        
-        dest = filedialog.asksaveasfilename(
-            defaultextension=".docx",
-            filetypes=[("Word Documents", "*.docx"), ("All Files", "*.*")],
-            initialfile=initial_name,
-            title="Export Timesheet"
-        )
-        if dest:
-            try:
-                docx_exporter.generate_docx(
-                    employee_name=ts["employee_name"],
-                    personal_id=ts["personal_id"],
-                    city_name=ts["city_name"],
-                    year=ts["year"],
-                    month=ts["month"],
-                    daily_entries=ts["entries"],
-                    target_hours=ts["target_hours"],
-                    output_path=dest
-                )
-                messagebox.showinfo("Export Success", f"Word document exported to:\n{dest}")
-                self.write_log(f"[Export] Document saved successfully to {dest}")
-            except Exception as e:
-                messagebox.showerror("Export Error", f"Failed to export document:\n{e}")
-                self.write_log(f"[Error] Export failed: {e}")
+            dest = filedialog.asksaveasfilename(
+                defaultextension=".docx",
+                filetypes=[("Word Documents", "*.docx"), ("All Files", "*.*")],
+                initialfile=initial_name,
+                title="Export Timesheet"
+            )
+            if dest:
+                try:
+                    docx_exporter.generate_docx(
+                        employee_name=ts["employee_name"],
+                        personal_id=ts["personal_id"],
+                        city_name=ts["city_name"],
+                        year=ts["year"],
+                        month=ts["month"],
+                        daily_entries=ts["entries"],
+                        target_hours=ts["target_hours"],
+                        output_path=dest
+                    )
+                    messagebox.showinfo("Export Success", f"Word document exported to:\n{dest}")
+                    self.write_log(f"[Export] Document saved successfully to {dest}")
+                except Exception as e:
+                    messagebox.showerror("Export Error", f"Failed to export document:\n{e}")
+                    self.write_log(f"[Error] Export failed: {e}")
+        else:
+            dest_dir = filedialog.askdirectory(title="Select Directory to Save Exported Timesheets")
+            if dest_dir:
+                success_count = 0
+                fail_count = 0
+                for ts_id in ts_ids:
+                    ts = models.get_timesheet_with_entries(ts_id)
+                    if not ts:
+                        continue
+                    clean_name = "".join(c for c in ts["employee_name"] if c.isalnum() or c in (" ", "_", "-")).strip().replace(" ", "_")
+                    file_name = f"timesheet_{clean_name}_{ts['month']:02d}_{ts['year']}.docx"
+                    dest_path = os.path.join(dest_dir, file_name)
+                    try:
+                        docx_exporter.generate_docx(
+                            employee_name=ts["employee_name"],
+                            personal_id=ts["personal_id"],
+                            city_name=ts["city_name"],
+                            year=ts["year"],
+                            month=ts["month"],
+                            daily_entries=ts["entries"],
+                            target_hours=ts["target_hours"],
+                            output_path=dest_path
+                        )
+                        success_count += 1
+                    except Exception as e:
+                        self.write_log(f"[Error] Failed to export timesheet ID {ts_id}: {e}")
+                        fail_count += 1
+                
+                msg = f"Successfully exported {success_count} timesheet(s) to:\n{dest_dir}"
+                if fail_count > 0:
+                    msg += f"\nFailed to export {fail_count} timesheet(s)."
+                messagebox.showinfo("Export Summary", msg)
 
     # ==============================================================================
     # Solver execution helper
     # ==============================================================================
-    def run_solver_background(self, solver_input: sat_solver.SolverInput, callback_success):
+    def run_solver_background(self, solver_input: sat_solver.SolverInput, callback_success, ts_id: int):
         """Runs the CP-SAT solver in a background thread and updates the UI progress indicators."""
         self.write_log(f"[Solver] Starting CP-SAT calculations ({solver_input.mode} mode)...")
         
-        # Start and show modern progress bar
-        self.progress_bar.pack(fill=tk.X, pady=(0, 10), after=self.meta_frame)
-        self.progress_bar.start()
-        self.meta_lbl.configure(text="CP-SAT Solver calculating optimal shift distribution... please wait.")
-        self.status_badge.pack_forget()
+        prog_bar = getattr(self, 'progress_bar', None)
+        meta_lbl = getattr(self, 'meta_lbl', None)
+        status_badge = getattr(self, 'status_badge', None)
+        buttons = [
+            getattr(self, 'btn_single_solve', None),
+            getattr(self, 'btn_batch_solve', None),
+            getattr(self, 'btn_finalize', None),
+            getattr(self, 'btn_revert', None),
+            getattr(self, 'btn_export_word_detail', None)
+        ]
         
-        # Disable action buttons to prevent concurrent calculations
-        self.btn_single_solve.configure(state="disabled")
-        self.btn_batch_solve.configure(state="disabled")
-        self.btn_finalize.configure(state="disabled")
-        self.btn_revert.configure(state="disabled")
-        
+        if prog_bar:
+            prog_bar.pack(fill=tk.X, pady=(0, 10), after=self.meta_frame)
+            prog_bar.start()
+        if meta_lbl:
+            meta_lbl.configure(text="CP-SAT Solver calculating optimal shift distribution... please wait.")
+        if status_badge:
+            status_badge.pack_forget()
+            
+        for btn in buttons:
+            if btn:
+                btn.configure(state="disabled")
+                
         def run():
             try:
                 result = sat_solver.solve(solver_input)
@@ -1140,28 +1364,30 @@ class TimesheetAppGUI:
                 self.root.after(0, lambda: handle_error(e))
                 
         def handle_done(result):
-            self.progress_bar.stop()
-            self.progress_bar.pack_forget()
+            if prog_bar:
+                prog_bar.stop()
+                prog_bar.pack_forget()
             callback_success(result)
             
         def handle_error(e):
-            self.progress_bar.stop()
-            self.progress_bar.pack_forget()
+            if prog_bar:
+                prog_bar.stop()
+                prog_bar.pack_forget()
             messagebox.showerror("Solver Error", f"Solver encountered an exception:\n{e}")
             self.load_timesheets()
-            
+                
         threading.Thread(target=run, daemon=True).start()
 
     # ==============================================================================
     # 3.1 Single Driver Solver (Incremental Mode)
     # ==============================================================================
-    def solve_single_timesheet(self):
-        selected = self.timesheets_tree.selection()
-        if not selected:
-            return
-        values = self.timesheets_tree.item(selected[0], "values")
-        ts_id = int(values[0])
-        
+    def solve_single_timesheet(self, ts_id: Optional[int] = None):
+        if ts_id is None:
+            ts_ids = self.get_selected_timesheet_ids()
+            if not ts_ids:
+                return
+            ts_id = ts_ids[0]
+            
         ts = models.get_timesheet_with_entries(ts_id)
         if not ts:
             return
@@ -1264,19 +1490,20 @@ class TimesheetAppGUI:
             self.write_log(f"[DB] Saved distributed entries for timesheet ID {ts_id}")
             self.load_timesheets()
             
-        self.run_solver_background(solver_input, on_success)
+        self.run_solver_background(solver_input, on_success, ts_id)
 
     # ==============================================================================
     # 3.2 Batch Solver (City Batch Mode)
     # ==============================================================================
-    def solve_batch_timesheets(self):
-        selected = self.timesheets_tree.selection()
-        if not selected:
-            messagebox.showwarning("Batch solve", "Please select a timesheet to define the city and month context.")
-            return
+    def solve_batch_timesheets(self, ts_id: Optional[int] = None):
+        if ts_id is None:
+            ts_ids = self.get_selected_timesheet_ids()
+            if not ts_ids:
+                messagebox.showwarning("Batch solve", "Please select a timesheet to define the city and month context.")
+                return
+            ts_id = ts_ids[0]
             
-        values = self.timesheets_tree.item(selected[0], "values")
-        selected_ts = models.get_timesheet_with_entries(int(values[0]))
+        selected_ts = models.get_timesheet_with_entries(ts_id)
         if not selected_ts:
             return
             
@@ -1357,7 +1584,7 @@ class TimesheetAppGUI:
             if result.status == 'nearest':
                 accept = messagebox.askyesno(
                     "Nearest Feasible Result",
-                    f"Exact targets could not be achieved.\n"
+                    f"Redistribution exact targets could not be achieved.\n"
                     f"Total deviation: {result.target_deviation:.1f} hours.\n\n"
                     f"Do you want to accept this schedule?",
                     icon="question"
@@ -1385,38 +1612,12 @@ class TimesheetAppGUI:
                 self.write_log(f"[DB] Saved distributed entries for timesheet ID {ts['id']}")
                 
             self.load_timesheets()
-            
-        self.run_solver_background(solver_input, on_success)
+                
+        self.run_solver_background(solver_input, on_success, ts_id)
 
     # ==============================================================================
     # 4. Post-Solver Manual Edit Workflow
     # ==============================================================================
-    def on_grid_double_click(self, event):
-        # Prevent editing if timesheet is Finalized
-        selected_ts_idx = self.timesheets_tree.selection()
-        if not selected_ts_idx:
-            return
-        ts_values = self.timesheets_tree.item(selected_ts_idx[0], "values")
-        ts_id = int(ts_values[0])
-        ts = models.get_timesheet_with_entries(ts_id)
-        if ts.get("status") == "Finalized":
-            messagebox.showwarning("Edit Blocked", "Finalized timesheets cannot be modified. Revert to Draft first.")
-            return
-
-        selected_grid_idx = self.grid_tree.selection()
-        if not selected_grid_idx:
-            return
-        grid_values = self.grid_tree.item(selected_grid_idx[0], "values")
-        
-        # grid_values contains: Date, Start Time, End Time, Break, Hours Worked, Remarks
-        date_str = grid_values[0]
-        start_time = grid_values[1]
-        end_time = grid_values[2]
-        break_dur = grid_values[3]
-        hours_str = grid_values[4]
-        remarks = grid_values[5]
-        
-        self.manual_edit_dialog(ts, date_str, start_time, end_time, break_dur, hours_str, remarks)
 
     def manual_edit_dialog(self, ts: dict, date_str: str, start: str, end: str, break_dur: str, hours_str: str, remarks_str: str):
         dialog = ctk.CTkToplevel(self.root)
@@ -1729,8 +1930,8 @@ class TimesheetAppGUI:
                         "remarks": ""
                     })
                 models.save_daily_entries(ts["id"], db_entries)
-                self.write_log(f"[DB] Saved redistributed entries for timesheet ID {ts['id']}")
+                self.write_log(f"[DB] Saved distributed entries for timesheet ID {ts['id']}")
                 
             self.load_timesheets()
             
-        self.run_solver_background(solver_input, on_success)
+        self.run_solver_background(solver_input, on_success, edited_ts["id"])

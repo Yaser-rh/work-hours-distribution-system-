@@ -89,7 +89,7 @@ class SolverResult:
 # Solve Routine
 # ==============================================================================
 
-def solve(solver_input: SolverInput) -> SolverResult:
+def solve(solver_input: SolverInput, timeout: float = 10.0) -> SolverResult:
     """
     Solves the driver shift distribution problem using CP-SAT.
     Runs Phase A (exact target match), falling back to Phase B (nearest feasible) if A fails.
@@ -187,7 +187,7 @@ def solve(solver_input: SolverInput) -> SolverResult:
     vars_a = _build_solver_vars_and_constraints(model_a, solver_input, locked_coverage, exact=True)
     
     solver_a = cp_model.CpSolver()
-    solver_a.parameters.max_time_in_seconds = 10.0
+    solver_a.parameters.max_time_in_seconds = timeout
     solver_a.parameters.num_search_workers = 8
     solver_a.parameters.relative_gap_limit = 0.00
     
@@ -210,7 +210,7 @@ def solve(solver_input: SolverInput) -> SolverResult:
     vars_b = _build_solver_vars_and_constraints(model_b, solver_input, locked_coverage, exact=False)
     
     solver_b = cp_model.CpSolver()
-    solver_b.parameters.max_time_in_seconds = 10.0
+    solver_b.parameters.max_time_in_seconds = timeout
     solver_b.parameters.num_search_workers = 8
     solver_b.parameters.relative_gap_limit = 0.00
     
@@ -387,6 +387,7 @@ def _build_solver_vars_and_constraints(model: cp_model.CpModel,
     gamma = 1000 # weight of target deviation in Phase B
     delta = 10000 # weight of uncovered slots penalty (Option B)
     eta = 10     # weight of daily distribution penalty (Hybrid approach)
+    theta = 5    # weight of hourly smoothing/coverage variance penalty
 
     # Calculate baseline coverage from locked and existing drivers
     baseline_coverage = {}
@@ -445,7 +446,27 @@ def _build_solver_vars_and_constraints(model: cp_model.CpModel,
         
     daily_distribution_penalty = sum(daily_deviations)
 
-    # 4. Uncovered slots penalty (Option B - Soft Constraint)
+    # 4. Hourly smoothing penalty (minimizing hourly coverage variance from monthly average)
+    total_slots = num_days * (city_end - city_start)
+    ideal_slot_coverage_x10 = (10 * total_monthly_units) // total_slots if total_slots > 0 else 0
+    max_possible_cov = len(all_active_driver_ids) + len(solver_input.locked_entries)
+    
+    hourly_deviations = []
+    for d in range(1, num_days + 1):
+        locked_day = locked_coverage.get(d, {})
+        for t in range(city_start, city_end):
+            active_covers = [covers_var[w, d, t] for w in all_active_driver_ids]
+            locked_val = locked_day.get(t, 0)
+            slot_cov = sum(active_covers) + locked_val
+            
+            dev_var = model.NewIntVar(0, max_possible_cov * 10, f"slot_dev_{d}_{t}")
+            model.Add(10 * slot_cov - ideal_slot_coverage_x10 <= dev_var)
+            model.Add(ideal_slot_coverage_x10 - 10 * slot_cov <= dev_var)
+            hourly_deviations.append(dev_var)
+            
+    hourly_smoothing_penalty = sum(hourly_deviations)
+
+    # 5. Uncovered slots penalty (Option B - Soft Constraint)
     uncovered_penalty_list = []
     for d in range(1, num_days + 1):
         for t in range(city_start, city_end):
@@ -457,10 +478,10 @@ def _build_solver_vars_and_constraints(model: cp_model.CpModel,
     uncovered_penalty = sum(uncovered_penalty_list)
 
     if exact:
-        model.Minimize(alpha * half_hour_penalty + beta * staggering_penalty + eta * daily_distribution_penalty + delta * uncovered_penalty)
+        model.Minimize(alpha * half_hour_penalty + beta * staggering_penalty + eta * daily_distribution_penalty + theta * hourly_smoothing_penalty + delta * uncovered_penalty)
     else:
         dev_penalty = sum(deviation_var[w] for w in all_active_driver_ids)
-        model.Minimize(alpha * half_hour_penalty + beta * staggering_penalty + eta * daily_distribution_penalty + delta * uncovered_penalty + gamma * dev_penalty)
+        model.Minimize(alpha * half_hour_penalty + beta * staggering_penalty + eta * daily_distribution_penalty + theta * hourly_smoothing_penalty + delta * uncovered_penalty + gamma * dev_penalty)
 
     return {
         'active_var': active_var,

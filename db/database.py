@@ -31,9 +31,12 @@ def initialize_database() -> None:
                 CREATE TABLE IF NOT EXISTS employee (
                     id          INTEGER PRIMARY KEY AUTOINCREMENT,
                     name        TEXT NOT NULL,
-                    personal_id TEXT NOT NULL
+                    personal_id TEXT NOT NULL UNIQUE
                 )
             """)
+            
+            # Index to enforce UNIQUE constraint on existing databases
+            conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_employee_personal_id ON employee(personal_id)")
             
             # Timesheet table
             conn.execute("""

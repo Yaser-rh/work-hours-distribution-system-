@@ -1,0 +1,31 @@
+C:\Users\rh22\Desktop\excel\build.ps1
+C:\Users\rh22\Desktop\excel\generate_timesheet.py
+C:\Users\rh22\Desktop\excel\db\database.py
+C:\Users\rh22\Desktop\excel\db\models.py
+C:\Users\rh22\Desktop\excel\db\__init__.py
+C:\Users\rh22\Desktop\excel\exporter\docx_exporter.py
+C:\Users\rh22\Desktop\excel\exporter\__init__.py
+C:\Users\rh22\Desktop\excel\legacy code\generate_timesheet.py
+C:\Users\rh22\Desktop\excel\legacy code\gg.py
+C:\Users\rh22\Desktop\excel\solver\sat_solver.py
+C:\Users\rh22\Desktop\excel\solver\__init__.py
+C:\Users\rh22\Desktop\excel\tests\test_database.py
+C:\Users\rh22\Desktop\excel\tests\test_exporter.py
+C:\Users\rh22\Desktop\excel\tests\test_solver.py
+C:\Users\rh22\Desktop\excel\ui\analytics_tab.py
+C:\Users\rh22\Desktop\excel\ui\main_gui.py
+C:\Users\rh22\Desktop\excel\ui\__init__.py
+C:\Users\rh22\Desktop\excel\utils\paths.py
+C:\Users\rh22\Desktop\excel\future_improvements.md
+C:\Users\rh22\Desktop\excel\README.md
+C:\Users\rh22\Desktop\excel\user_guide.md
+C:\Users\rh22\Desktop\excel\.agents\rules\graphify.md
+C:\Users\rh22\Desktop\excel\.agents\workflows\graphify.md
+C:\Users\rh22\Desktop\excel\graphify-out\converted\example_ab9c8ac3.md
+C:\Users\rh22\Desktop\excel\legacy code\gg22_explanation.md
+C:\Users\rh22\Desktop\excel\legacy code\gg22_improved.txt
+C:\Users\rh22\Desktop\excel\legacy code\implementation_plan2.md
+C:\Users\rh22\Desktop\excel\legacy code\phase3_architecture.md
+C:\Users\rh22\Desktop\excel\legacy code\plan.md
+C:\Users\rh22\Desktop\excel\graphify-out\converted\sample_timesheet_a847d275.md
+C:\Users\rh22\Desktop\excel\graphify-out\converted\timesheet_ahmad_go_06_2026_91e3a2ce.md
