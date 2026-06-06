@@ -12,6 +12,10 @@ build.ps1
 # SQLite Database
 *.db
 timesheets.db
+*.backup
+
+# Graphify Knowledge Graph
+graphify-out/
 
 # Generated Word Timesheets
 timesheet_*.docx

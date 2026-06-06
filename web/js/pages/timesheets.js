@@ -9,6 +9,7 @@ App.registerPage('timesheets', {
     cities: [],
     drivers: [],
     editingRow: null,
+    activeTab: 'Draft',
 
     async render(container) {
         // Pre-load cities and drivers
@@ -19,6 +20,9 @@ App.registerPage('timesheets', {
         const now = new Date();
         const curMonth = now.getMonth() + 1;
         const curYear = now.getFullYear();
+
+        const isDraftActive = this.activeTab === 'Draft';
+        const isFinalizedActive = this.activeTab === 'Finalized';
 
         container.innerHTML = `
             <div class="section-header">
@@ -44,12 +48,6 @@ App.registerPage('timesheets', {
                     <option value="${curYear}" selected>${curYear}</option>
                     <option value="${curYear+1}">${curYear+1}</option>
                 </select>
-                <label class="form-label">Status</label>
-                <select class="form-select" id="tsFilterStatus" onchange="App.pages.timesheets.loadTimesheets()">
-                    <option value="">All</option>
-                    <option value="Draft">Draft</option>
-                    <option value="Finalized">Finalized</option>
-                </select>
                 <label class="form-label">Timeout</label>
                 <select class="form-select" id="tsTimeoutLimit" style="width:100px">
                     <option value="10">10s</option>
@@ -62,6 +60,10 @@ App.registerPage('timesheets', {
             </div>
             <div class="ts-layout">
                 <div class="card ts-list-panel">
+                    <div class="ts-tabs">
+                        <button class="ts-tab ${isDraftActive ? 'active' : ''}" data-tab="Draft" onclick="App.pages.timesheets.changeTab('Draft')">Drafts</button>
+                        <button class="ts-tab ${isFinalizedActive ? 'active' : ''}" data-tab="Finalized" onclick="App.pages.timesheets.changeTab('Finalized')">Finalized</button>
+                    </div>
                     <div class="select-all-bar">
                         <input type="checkbox" id="tsSelectAll" onchange="App.pages.timesheets.toggleSelectAll()" style="accent-color:var(--accent-primary)">
                         <label for="tsSelectAll" style="cursor:pointer">Select All</label>
@@ -105,7 +107,7 @@ App.registerPage('timesheets', {
         const cityId = document.getElementById('tsFilterCity')?.value || '';
         const month = document.getElementById('tsFilterMonth')?.value || '';
         const year = document.getElementById('tsFilterYear')?.value || '';
-        const status = document.getElementById('tsFilterStatus')?.value || '';
+        const status = this.activeTab;
 
         let params = {};
         if (cityId) params.city_id = cityId;
@@ -119,6 +121,26 @@ App.registerPage('timesheets', {
         } catch (e) {
             App.toast('Failed to load timesheets: ' + e.message, 'error');
         }
+    },
+
+    changeTab(tab) {
+        this.activeTab = tab;
+        document.querySelectorAll('.ts-tab').forEach(btn => {
+            btn.classList.toggle('active', btn.dataset.tab === tab);
+        });
+        this.selectedIds.clear();
+        this.selectedTs = null;
+        const detail = document.getElementById('tsDetail');
+        if (detail) {
+            detail.innerHTML = `
+                <div class="empty-state">
+                    <div class="empty-state-icon">📋</div>
+                    <div class="empty-state-title">No Timesheet Selected</div>
+                    <div class="empty-state-text">Select a timesheet from the list to view and edit the daily schedule.</div>
+                </div>
+            `;
+        }
+        this.loadTimesheets();
     },
 
     renderList() {

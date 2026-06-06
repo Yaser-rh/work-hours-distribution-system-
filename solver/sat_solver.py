@@ -180,16 +180,20 @@ def solve(solver_input: SolverInput, timeout: float = 10.0) -> SolverResult:
                         if 0 <= slot < 48:
                             locked_coverage[day][slot] += 1
 
+    # Generate greedy warm-start hints (gives solver a good starting point)
+    greedy_hints = _generate_greedy_hints(solver_input)
+
     # ==============================================================================
     # Phase A: Exact Solve
     # ==============================================================================
     model_a = cp_model.CpModel()
     vars_a = _build_solver_vars_and_constraints(model_a, solver_input, locked_coverage, exact=True)
+    _apply_hints(model_a, vars_a, greedy_hints, solver_input)
     
     solver_a = cp_model.CpSolver()
     solver_a.parameters.max_time_in_seconds = timeout
     solver_a.parameters.num_search_workers = 8
-    solver_a.parameters.relative_gap_limit = 0.00
+    solver_a.parameters.relative_gap_limit = 0.02
     
     status_a = solver_a.Solve(model_a)
     
@@ -208,11 +212,12 @@ def solve(solver_input: SolverInput, timeout: float = 10.0) -> SolverResult:
     # ==============================================================================
     model_b = cp_model.CpModel()
     vars_b = _build_solver_vars_and_constraints(model_b, solver_input, locked_coverage, exact=False)
+    _apply_hints(model_b, vars_b, greedy_hints, solver_input)
     
     solver_b = cp_model.CpSolver()
     solver_b.parameters.max_time_in_seconds = timeout
     solver_b.parameters.num_search_workers = 8
-    solver_b.parameters.relative_gap_limit = 0.00
+    solver_b.parameters.relative_gap_limit = 0.02
     
     status_b = solver_b.Solve(model_b)
     
@@ -540,3 +545,160 @@ def _extract_results(solver: cp_model.CpSolver,
         schedules[w] = driver_schedule
 
     return schedules
+
+
+# ==============================================================================
+# Greedy Warm-Start Hint Generation
+# ==============================================================================
+
+def _generate_greedy_hints(solver_input):
+    """
+    Build a greedy feasible schedule to warm-start the CP-SAT solver.
+    The hint doesn't need to be perfectly optimal — just a reasonable
+    starting point that respects the main structural constraints.
+    This dramatically reduces convergence time for the "even heatmap" objective.
+
+    Returns dict of (employee_id, day) -> (active, hours_units, start_slot, break_bool)
+    """
+    hints = {}
+    num_days = solver_input.num_days
+    city_start = solver_input.city_start
+    city_end = solver_input.city_end
+    num_drivers = len(solver_input.drivers)
+
+    for driver_idx, d_spec in enumerate(solver_input.drivers):
+        w = d_spec.employee_id
+        target = d_spec.target_units
+
+        # Initialize all days as off
+        for d in range(1, num_days + 1):
+            hints[w, d] = (0, 0, 0, 0)
+
+        if target <= 0:
+            continue
+
+        prev_month = solver_input.prev_month_boundary.get(w, [0] * 6)
+        cross_city = solver_input.cross_city_active.get(w, {})
+
+        # --- Step 1: Choose base shift length (prefer whole-hour near 6h) ---
+        # Sort whole-hour shifts by proximity to 6h (12 units) for natural feel
+        whole_hour_shifts = sorted(
+            [s for s in ALLOWED_SHIFTS if s not in ODD_SHIFTS],
+            key=lambda s: abs(s - 12)
+        )  # [12, 10, 14, 8, 16, 6, 4]
+
+        best_shift = 12
+        best_waste = float('inf')
+        for s in whole_hour_shifts:
+            n = max(1, round(target / s))
+            waste = abs(target - s * n)
+            if waste < best_waste:
+                best_shift = s
+                best_waste = waste
+                if waste == 0:
+                    break
+
+        num_work_days = max(1, round(target / best_shift))
+        # Clamp: at least enough days for max-shift, at most 6-of-7 rule
+        num_work_days = max(int(math.ceil(target / 16)), num_work_days)
+        max_feasible = min(num_days, int(num_days * 6.0 / 7.0) + 1)
+        num_work_days = min(num_work_days, max_feasible)
+
+        # --- Step 2: Select work days with even spacing ---
+        available_days = [d for d in range(1, num_days + 1)
+                         if cross_city.get(d, 0) == 0]
+
+        if not available_days:
+            continue
+
+        num_work_days = min(num_work_days, len(available_days))
+
+        # Pick evenly-spaced days from the available pool
+        step = len(available_days) / max(1, num_work_days)
+        selected_indices = [int(i * step + step / 2) for i in range(num_work_days)]
+        selected_indices = [min(idx, len(available_days) - 1) for idx in selected_indices]
+        selected_set = set(available_days[i] for i in selected_indices)
+
+        # Validate against consecutive-day limit (max 6 in any 7-day window)
+        pad = max(0, 6 - len(prev_month))
+        global_active = [0] * pad + list(prev_month)
+        validated_days = []
+
+        for d in range(1, num_days + 1):
+            cross_active = cross_city.get(d, 0)
+
+            if d in selected_set:
+                # Check: would adding this day make the trailing 7-day window exceed 6?
+                test_window = (global_active + [1])[-7:]
+                if sum(test_window) <= 6:
+                    validated_days.append(d)
+                    global_active.append(1)
+                else:
+                    global_active.append(0)  # Skip — would violate
+            else:
+                global_active.append(cross_active)
+
+        if not validated_days:
+            continue
+
+        # --- Step 3: Distribute hours across selected days ---
+        remaining = target
+        day_hours = {}
+
+        for i, d in enumerate(validated_days):
+            days_left = len(validated_days) - i - 1
+            if days_left > 0:
+                # Reserve at least 4 units (2h) per remaining day
+                max_here = remaining - days_left * 4
+                h = min(best_shift, max_here)
+                h = max(4, min(16, h))
+            else:
+                # Last day gets the rest (clamped)
+                h = max(4, min(16, remaining))
+
+            # Snap to nearest allowed shift
+            if h not in ALLOWED_SHIFTS:
+                h = min(ALLOWED_SHIFTS, key=lambda x: abs(x - h))
+
+            day_hours[d] = h
+            remaining -= h
+            if remaining <= 0:
+                break
+
+        # --- Step 4: Assign start times with driver staggering ---
+        stagger = 0
+        if num_drivers > 1:
+            window_size = city_end - city_start
+            stagger = (driver_idx * window_size) // (num_drivers + 1)
+
+        for d, h in day_hours.items():
+            has_break = 1 if h >= 13 else 0
+            total_span = h + has_break
+
+            start = city_start + stagger
+            if start + total_span > city_end:
+                start = city_end - total_span
+            start = max(city_start, start)
+
+            hints[w, d] = (1, h, start, has_break)
+
+    return hints
+
+
+def _apply_hints(model, variables, hints, solver_input):
+    """
+    Apply the greedy solution as hints to the CP-SAT model.
+    Hints guide the solver toward a good initial solution without
+    adding any constraints — the solver is free to deviate.
+    """
+    for (w, d), (active, hours, start, brk) in hints.items():
+        if (w, d) not in variables['active_var']:
+            continue
+
+        model.AddHint(variables['active_var'][w, d], active)
+        model.AddHint(variables['hours_var'][w, d], hours)
+        model.AddHint(variables['start_var'][w, d], start)
+        model.AddHint(variables['break_var'][w, d], brk)
+
+        end_val = start + hours + brk if active else 0
+        model.AddHint(variables['end_var'][w, d], end_val)

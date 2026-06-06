@@ -38,10 +38,10 @@ def generate_docx(
 
     doc = Document()
     
-    # 1. Page Setup (Margins: 0.8 inches all around)
+    # 1. Page Setup (Margins: 0.6 inches top/bottom, 0.8 inches left/right)
     for section in doc.sections:
-        section.top_margin = Inches(0.8)
-        section.bottom_margin = Inches(0.8)
+        section.top_margin = Inches(0.6)
+        section.bottom_margin = Inches(0.6)
         section.left_margin = Inches(0.8)
         section.right_margin = Inches(0.8)
         
@@ -54,9 +54,9 @@ def generate_docx(
     # 3. Add Title
     title_p = doc.add_paragraph()
     title_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    title_p.paragraph_format.space_after = Pt(18)
+    title_p.paragraph_format.space_after = Pt(12)
     title_run = title_p.add_run("Tätigkeitsnachweis")
-    title_run.font.size = Pt(22)
+    title_run.font.size = Pt(20)
     title_run.font.bold = True
     
     # 4. Add Metadata Block
@@ -65,9 +65,10 @@ def generate_docx(
         ("Personal Nummer:", personal_id),
         ("Stadt:", city_name)
     ]
-    for label, val in metadata:
+    for idx, (label, val) in enumerate(metadata):
         p = doc.add_paragraph()
-        p.paragraph_format.space_after = Pt(4)
+        # Set larger spacing after the last item to separate it from the table
+        p.paragraph_format.space_after = Pt(4 if idx < len(metadata) - 1 else 12)
         p.paragraph_format.line_spacing = 1.15
         
         label_run = p.add_run(f"{label} ")
@@ -75,10 +76,6 @@ def generate_docx(
         
         value_run = p.add_run(val)
         value_run.underline = True
-        
-    # Spacing before table
-    spacer = doc.add_paragraph()
-    spacer.paragraph_format.space_after = Pt(12)
     
     # 5. Create Daily Table
     headers = ["Datum", "Arbeitsbeginn", "Arbeitsende", "Pause", "Arbeitszeit", "Sonstiges"]
@@ -151,8 +148,8 @@ def generate_docx(
             
     # 6. Total Summary Block
     summary_p = doc.add_paragraph()
-    summary_p.paragraph_format.space_before = Pt(16)
-    summary_p.paragraph_format.space_after = Pt(40)
+    summary_p.paragraph_format.space_before = Pt(12)
+    summary_p.paragraph_format.space_after = Pt(16)
     
     summary_run_label = summary_p.add_run("Summe der Arbeitsstunden im Monat: ")
     summary_run_label.bold = True
@@ -163,7 +160,7 @@ def generate_docx(
     
     # 7. Footer Sign-off Section
     footer_p = doc.add_paragraph()
-    footer_p.paragraph_format.space_before = Pt(24)
+    footer_p.paragraph_format.space_before = Pt(16)
     footer_p.add_run("Datum: ______________________")
     footer_p.add_run("\t\t\t\t")
     footer_p.add_run("Unterschrift: ______________________")

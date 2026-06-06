@@ -75,7 +75,7 @@ class LauncherApp(ctk.CTk):
         # Button 2: Simple One-Function UI
         self.btn_simple = ctk.CTkButton(
             self.main_frame,
-            text="2. Simple One-Function UI (Future Update)",
+            text="2. Simple One-Function UI",
             font=ctk.CTkFont(family="Segoe UI", size=15, weight="bold"),
             height=50,
             width=350,
@@ -139,49 +139,29 @@ class LauncherApp(ctk.CTk):
     def run_simple_ui(self):
         self.withdraw()
         
-        simple_window = ctk.CTk()
-        simple_window.title("Simple One-Function UI")
-        simple_window.geometry("500x320")
-        
-        # Center simple window
-        sw = 500
-        sh = 320
-        sx = (self.winfo_screenwidth() // 2) - (sw // 2)
-        sy = (self.winfo_screenheight() // 2) - (sh // 2)
-        simple_window.geometry(f"{sw}x{sh}+{sx}+{sy}")
-        simple_window.resizable(False, False)
-        
-        # Frame
-        frame = ctk.CTkFrame(simple_window, corner_radius=15)
-        frame.pack(fill="both", expand=True, padx=20, pady=20)
-        
-        title = ctk.CTkLabel(
-            frame,
-            text="Simple One-Function UI",
-            font=ctk.CTkFont(family="Segoe UI", size=20, weight="bold")
-        )
-        title.pack(pady=(35, 10))
-        
-        desc = ctk.CTkLabel(
-            frame,
-            text="This is a placeholder for the simplified layout.\nIt will be fully implemented in a future update.\n\nPlease select another option to use the application.",
-            font=ctk.CTkFont(family="Segoe UI", size=13),
-            text_color="#a0aec0"
-        )
-        desc.pack(pady=20)
-        
-        btn_back = ctk.CTkButton(
-            frame,
-            text="Back to Launcher",
-            font=ctk.CTkFont(family="Segoe UI", size=13, weight="bold"),
-            width=180,
-            height=40,
-            command=lambda: [simple_window.destroy(), self.deiconify()]
-        )
-        btn_back.pack(pady=15)
-        
-        simple_window.protocol("WM_DELETE_WINDOW", lambda: [simple_window.destroy(), self.deiconify()])
-        simple_window.mainloop()
+        try:
+            from simple.simple_gui import SimpleAppGUI
+            
+            simple_window = ctk.CTk()
+            app = SimpleAppGUI(simple_window)
+            
+            # Center simple window
+            sw = 1000
+            sh = 680
+            sx = (self.winfo_screenwidth() // 2) - (sw // 2)
+            sy = (self.winfo_screenheight() // 2) - (sh // 2)
+            simple_window.geometry(f"{sw}x{sh}+{sx}+{sy}")
+            
+            def on_close():
+                simple_window.destroy()
+                self.deiconify()
+                
+            simple_window.protocol("WM_DELETE_WINDOW", on_close)
+            simple_window.mainloop()
+        except Exception as e:
+            self.deiconify()
+            from tkinter import messagebox
+            messagebox.showerror("Simple UI Error", f"Failed to launch Simple UI:\n{e}")
 
     def run_web_ui(self):
         self.withdraw()
