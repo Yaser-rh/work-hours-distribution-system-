@@ -31,9 +31,17 @@ def initialize_database() -> None:
                 CREATE TABLE IF NOT EXISTS employee (
                     id          INTEGER PRIMARY KEY AUTOINCREMENT,
                     name        TEXT NOT NULL,
-                    personal_id TEXT NOT NULL UNIQUE
+                    personal_id TEXT NOT NULL UNIQUE,
+                    city_id     INTEGER REFERENCES city(id) ON DELETE SET NULL
                 )
             """)
+            
+            # Migration check for older database versions missing city_id column
+            cursor = conn.cursor()
+            cursor.execute("PRAGMA table_info(employee)")
+            columns = [col[1] for col in cursor.fetchall()]
+            if "city_id" not in columns:
+                cursor.execute("ALTER TABLE employee ADD COLUMN city_id INTEGER REFERENCES city(id) ON DELETE SET NULL")
             
             # Index to enforce UNIQUE constraint on existing databases
             conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_employee_personal_id ON employee(personal_id)")

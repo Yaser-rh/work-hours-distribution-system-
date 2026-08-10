@@ -37,10 +37,13 @@ def add_log(level, message):
     if len(system_logs) > 500:
         system_logs.pop(0)
 
-# Add startup log
-add_log('INFO', "Driver Shift & Timesheet System Backend initialized.")
+if getattr(sys, 'frozen', False):
+    BASE_DIR = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
+else:
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-app = Flask(__name__, static_folder='web', static_url_path='')
+WEB_DIR = os.path.join(BASE_DIR, 'web')
+app = Flask(__name__, static_folder=WEB_DIR, static_url_path='')
 
 
 # ==============================================================================
@@ -66,11 +69,19 @@ def serve_static(path):
 @app.route('/api/cities', methods=['GET'])
 def api_get_cities():
     cities = models.get_cities()
-    # Enrich with driver count
+    all_drivers = models.get_employees()
+    # Enrich with driver count (drivers explicitly assigned to city or having timesheets in city)
     for city in cities:
+        bound_driver_ids = set(d['id'] for d in all_drivers if d.get('city_id') == city['id'])
         ts = models.get_timesheets(city_id=city['id'])
-        city['driver_count'] = len(set(t['employee_id'] for t in ts))
+        ts_driver_ids = set(t['employee_id'] for t in ts)
+        city['driver_count'] = len(bound_driver_ids | ts_driver_ids)
     return jsonify(cities)
+
+@app.route('/api/cities/<int:city_id>/drivers', methods=['GET'])
+def api_get_city_drivers(city_id):
+    drivers = models.get_employees(city_id=city_id)
+    return jsonify(drivers)
 
 @app.route('/api/cities', methods=['POST'])
 def api_add_city():
@@ -111,14 +122,21 @@ def api_delete_city(city_id):
 
 @app.route('/api/drivers', methods=['GET'])
 def api_get_drivers():
-    return jsonify(models.get_employees())
+    city_id = request.args.get('city_id', type=int)
+    return jsonify(models.get_employees(city_id=city_id))
 
 @app.route('/api/drivers', methods=['POST'])
 def api_add_driver():
     data = request.json
+    city_id = data.get('city_id')
+    if city_id is not None:
+        try:
+            city_id = int(city_id)
+        except (ValueError, TypeError):
+            city_id = None
     try:
-        emp_id = models.add_employee(data['name'], data['personal_id'])
-        add_log('INFO', f"Driver added: '{data['name']}' (ID: {emp_id}, Personal ID: {data['personal_id']})")
+        emp_id = models.add_employee(data['name'], data['personal_id'], city_id=city_id)
+        add_log('INFO', f"Driver added: '{data['name']}' (ID: {emp_id}, Personal ID: {data['personal_id']}, City ID: {city_id})")
         return jsonify({'id': emp_id, 'success': True}), 201
     except sqlite3.IntegrityError:
         add_log('WARNING', f"Failed to add driver '{data['name']}': Personal ID already exists.")
@@ -127,9 +145,15 @@ def api_add_driver():
 @app.route('/api/drivers/<int:driver_id>', methods=['PUT'])
 def api_update_driver(driver_id):
     data = request.json
+    city_id = data.get('city_id')
+    if city_id is not None:
+        try:
+            city_id = int(city_id)
+        except (ValueError, TypeError):
+            city_id = None
     try:
-        models.update_employee(driver_id, data['name'], data['personal_id'])
-        add_log('INFO', f"Driver updated: '{data['name']}' (ID: {driver_id}, Personal ID: {data['personal_id']})")
+        models.update_employee(driver_id, data['name'], data['personal_id'], city_id=city_id)
+        add_log('INFO', f"Driver updated: '{data['name']}' (ID: {driver_id}, Personal ID: {data['personal_id']}, City ID: {city_id})")
         return jsonify({'success': True})
     except sqlite3.IntegrityError:
         add_log('WARNING', f"Failed to update driver ID {driver_id}: Personal ID already exists.")
@@ -144,6 +168,31 @@ def api_delete_driver(driver_id):
     except sqlite3.IntegrityError:
         add_log('WARNING', f"Failed to delete driver ID {driver_id}: timesheets reference them.")
         return jsonify({'error': 'Cannot delete driver: timesheets reference them.'}), 409
+
+@app.route('/api/drivers/auto-assign-preview', methods=['GET'])
+def api_auto_assign_preview():
+    preview = models.get_auto_assign_preview()
+    return jsonify(preview)
+
+@app.route('/api/drivers/mass-assign-cities', methods=['POST'])
+def api_mass_assign_cities():
+    data = request.json or []
+    count = models.mass_update_driver_cities(data)
+    add_log('INFO', f"Mass assigned cities for {count} driver(s).")
+    return jsonify({'success': True, 'updated_count': count})
+
+@app.route('/api/drivers/<int:driver_id>/city', methods=['PUT'])
+def api_update_driver_city(driver_id):
+    data = request.json or {}
+    city_id = data.get('city_id')
+    if city_id is not None:
+        try:
+            city_id = int(city_id)
+        except (ValueError, TypeError):
+            city_id = None
+    models.update_employee_city(driver_id, city_id)
+    add_log('INFO', f"Updated city for driver ID {driver_id} to City ID {city_id}")
+    return jsonify({'success': True})
 
 @app.route('/api/drivers/<int:driver_id>/timesheets', methods=['GET'])
 def api_get_driver_timesheets(driver_id):

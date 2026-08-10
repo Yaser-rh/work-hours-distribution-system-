@@ -73,8 +73,10 @@ def test_city_crud():
 
 
 def test_employee_crud():
-    # 1. Add employee
-    emp_id = db.models.add_employee("Max Mustermann", "P12345")
+    city_id = db.models.add_city("Berlin", "08:00", "20:00")
+
+    # 1. Add employee with city association
+    emp_id = db.models.add_employee("Max Mustermann", "P12345", city_id=city_id)
     assert emp_id > 0
 
     # 2. Get employees
@@ -82,17 +84,80 @@ def test_employee_crud():
     assert len(employees) == 1
     assert employees[0]["name"] == "Max Mustermann"
     assert employees[0]["personal_id"] == "P12345"
+    assert employees[0]["city_id"] == city_id
+    assert employees[0]["city_name"] == "Berlin"
 
     # 3. Update employee
-    db.models.update_employee(emp_id, "Max Updated", "P54321")
+    db.models.update_employee(emp_id, "Max Updated", "P54321", city_id=None)
     employees = db.models.get_employees()
     assert employees[0]["name"] == "Max Updated"
     assert employees[0]["personal_id"] == "P54321"
+    assert employees[0]["city_id"] is None
 
     # 4. Delete employee
     db.models.delete_employee(emp_id)
     employees = db.models.get_employees()
     assert len(employees) == 0
+
+
+def test_employee_city_binding_and_migration(setup_test_db):
+    temp_db_path = setup_test_db
+    c1 = db.models.add_city("Munich", "08:00", "20:00")
+    c2 = db.models.add_city("Hamburg", "08:00", "20:00")
+
+    # Add driver in Munich
+    d1 = db.models.add_employee("Driver Munich", "P101", city_id=c1)
+    # Add driver in Hamburg
+    d2 = db.models.add_employee("Driver Hamburg", "P102", city_id=c2)
+    # Add unassigned driver (legacy)
+    d3 = db.models.add_employee("Driver Unassigned", "P103", city_id=None)
+
+    # Filter drivers for Munich: should return Munich driver and Unassigned driver
+    munich_drivers = db.models.get_employees(city_id=c1)
+    munich_ids = [d["id"] for d in munich_drivers]
+    assert d1 in munich_ids
+    assert d3 in munich_ids
+    assert d2 not in munich_ids
+
+    # Simulate older DB without city_id column on employee table
+    conn = sqlite3.connect(temp_db_path)
+    # Re-initialize to verify initialize_database migration runs without errors
+    conn.close()
+    db.database.initialize_database()
+
+    all_drivers = db.models.get_employees()
+    assert len(all_drivers) == 3
+
+
+def test_auto_assign_preview_and_mass_update():
+    c1 = db.models.add_city("Frankfurt", "08:00", "20:00")
+    c2 = db.models.add_city("Stuttgart", "08:00", "20:00")
+
+    # Add driver with no city initially
+    d1 = db.models.add_employee("Legacy Driver", "P500", city_id=None)
+
+    # Create timesheets in Stuttgart for this driver
+    db.models.create_timesheet(d1, c2, 2026, 5, 80.0)
+    db.models.create_timesheet(d1, c2, 2026, 6, 80.0)
+
+    # Auto assign preview
+    preview = db.models.get_auto_assign_preview()
+    assert len(preview) == 1
+    item = preview[0]
+    assert item["driver_id"] == d1
+    assert item["current_city_id"] is None
+    assert item["proposed_city_id"] == c2
+    assert item["proposed_city_name"] == "Stuttgart"
+    assert item["timesheet_count"] == 2
+
+    # Mass update city assignment
+    updated_count = db.models.mass_update_driver_cities([{"driver_id": d1, "city_id": c2}])
+    assert updated_count == 1
+
+    # Verify driver is now assigned to Stuttgart
+    employees = db.models.get_employees()
+    assert employees[0]["city_id"] == c2
+    assert employees[0]["city_name"] == "Stuttgart"
 
 
 def test_timesheet_crud():

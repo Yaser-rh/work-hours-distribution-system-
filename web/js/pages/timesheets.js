@@ -879,18 +879,30 @@ App.registerPage('timesheets', {
                 <button class="modal-close" onclick="App.closeModal()">✕</button>
             </div>
             <div class="modal-body">
-                <div class="form-row">
-                    <div class="form-group">
-                        <label class="form-label">City</label>
-                        <select class="form-select" id="newTsCity">${cityOptions}</select>
+                <!-- Highlighted City Selection Header -->
+                <div style="background: linear-gradient(135deg, rgba(99, 102, 241, 0.12), rgba(168, 85, 247, 0.12)); border: 2px solid var(--accent-primary); border-radius: 10px; padding: 14px 18px; margin-bottom: 18px;">
+                    <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px;">
+                        <span style="font-size:1.2rem;">🏙️</span>
+                        <label class="form-label" style="margin:0; font-weight:700; font-size:1rem; color:var(--text-primary);">
+                            Step 1: Select Target City
+                        </label>
                     </div>
-                    <div class="form-group" style="flex:0.5">
+                    <select class="form-select" id="newTsCity" style="font-size:1rem; font-weight:600; padding:10px; border:1.5px solid var(--accent-primary); background:var(--bg-card); cursor:pointer;">
+                        ${cityOptions}
+                    </select>
+                    <div style="font-size:0.78rem; color:var(--text-secondary); margin-top:6px;">
+                        📍 Showing drivers bound to the selected city.
+                    </div>
+                </div>
+
+                <div class="form-row" style="margin-bottom:16px;">
+                    <div class="form-group" style="flex:1">
                         <label class="form-label">Month</label>
                         <select class="form-select" id="newTsMonth">
-                            ${Array.from({length:12}, (_,i) => `<option value="${i+1}" ${i+1===now.getMonth()+1?'selected':''}>${String(i+1).padStart(2,'0')}</option>`).join('')}
+                            ${Array.from({length:12}, (_,i) => `<option value="${i+1}" ${i+1===now.getMonth()+1?'selected':''}>${String(i+1).padStart(2,'0')} - ${new Date(2000, i).toLocaleString('en', {month:'long'})}</option>`).join('')}
                         </select>
                     </div>
-                    <div class="form-group" style="flex:0.5">
+                    <div class="form-group" style="flex:1">
                         <label class="form-label">Year</label>
                         <select class="form-select" id="newTsYear">
                             <option value="${now.getFullYear()}">${now.getFullYear()}</option>
@@ -898,6 +910,7 @@ App.registerPage('timesheets', {
                         </select>
                     </div>
                 </div>
+
                 <div class="form-group">
                     <label class="form-label">Target Hours Mode</label>
                     <div class="flex gap-16" style="margin-bottom:8px">
@@ -912,9 +925,10 @@ App.registerPage('timesheets', {
                         <input class="form-input" id="newTsHours" type="number" step="0.5" min="10" max="208" value="120" placeholder="Target hours" style="width:120px">
                     </div>
                 </div>
+
                 <div class="form-group">
                     <div class="flex items-center justify-between mb-8">
-                        <label class="form-label" style="margin:0">Select Drivers</label>
+                        <label class="form-label" style="margin:0" id="newTsDriverSectionTitle">Select City Drivers</label>
                         <label style="display:flex;align-items:center;gap:6px;font-size:0.82rem;color:var(--text-secondary);cursor:pointer">
                             <input type="checkbox" id="newTsSelectAll" onchange="App.pages.timesheets.toggleNewSelectAll()"> Select All
                         </label>
@@ -931,7 +945,11 @@ App.registerPage('timesheets', {
             </div>
         `, { wide: true });
 
-        this.renderDriverCheckboxes();
+        // Fresh load of drivers to get updated city bindings
+        App.api('/api/drivers').then(drivers => {
+            this.drivers = drivers;
+            this.renderDriverCheckboxes();
+        }).catch(() => this.renderDriverCheckboxes());
 
         document.getElementById('newTsCreateBtn').addEventListener('click', () => this.createTimesheets());
         document.getElementById('newTsCity').addEventListener('change', () => this.renderDriverCheckboxes());
@@ -941,9 +959,31 @@ App.registerPage('timesheets', {
 
     async renderDriverCheckboxes() {
         const list = document.getElementById('newTsDriverList');
-        const cityId = document.getElementById('newTsCity')?.value;
+        const cityIdStr = document.getElementById('newTsCity')?.value;
+        const cityId = cityIdStr ? parseInt(cityIdStr) : null;
         const month = document.getElementById('newTsMonth')?.value;
         const year = document.getElementById('newTsYear')?.value;
+
+        const selectedCityObj = this.cities.find(c => c.id === cityId);
+        const titleEl = document.getElementById('newTsDriverSectionTitle');
+        if (titleEl && selectedCityObj) {
+            titleEl.textContent = `Select Drivers for ${selectedCityObj.name}`;
+        }
+
+        // Filter drivers: show drivers assigned to this city (or unassigned drivers)
+        const cityDrivers = this.drivers.filter(d => d.city_id === cityId || !d.city_id);
+
+        if (cityDrivers.length === 0) {
+            list.innerHTML = `
+                <div class="empty-state" style="padding:20px">
+                    <div class="empty-state-icon">🏙️</div>
+                    <div class="empty-state-title" style="font-size:0.95rem">No drivers bound to ${selectedCityObj ? selectedCityObj.name : 'this city'}</div>
+                    <div class="empty-state-text" style="font-size:0.8rem">Add drivers to this city in the Cities tab or Drivers tab.</div>
+                    <button class="btn btn-ghost btn-sm mt-8" onclick="App.closeModal(); location.hash='cities';">Go to Cities Tab</button>
+                </div>
+            `;
+            return;
+        }
 
         // Check which drivers already have timesheets for this city+month
         let existingTs = [];
@@ -959,12 +999,16 @@ App.registerPage('timesheets', {
         const isCustom = document.querySelector('input[name="hoursMode"]:checked')?.value === 'custom';
         const defaultHours = document.getElementById('newTsHours')?.value || '120';
 
-        list.innerHTML = this.drivers.map(d => {
+        list.innerHTML = cityDrivers.map(d => {
             const exists = existingDriverIds.has(d.id);
+            const isUnassigned = !d.city_id;
             return `
                 <div class="checkbox-item ${exists ? 'disabled' : ''}">
                     <input type="checkbox" class="newTsDriverCheck" data-driver-id="${d.id}" ${exists ? 'disabled' : ''}>
-                    <span class="checkbox-item-label">${d.name} <span style="color:var(--text-tertiary);font-size:0.78rem">(${d.personal_id})</span></span>
+                    <span class="checkbox-item-label">
+                        ${d.name} <span style="color:var(--text-tertiary);font-size:0.78rem">(${d.personal_id})</span>
+                        ${isUnassigned ? '<span style="color:var(--text-tertiary);font-size:0.72rem;margin-left:4px;">[Unassigned]</span>' : ''}
+                    </span>
                     ${isCustom ? `<input class="checkbox-item-input" data-driver-hours="${d.id}" type="number" step="0.5" min="10" max="208" value="${defaultHours}" ${exists ? 'disabled' : ''}>` : ''}
                     ${exists ? '<span style="font-size:0.72rem;color:var(--accent-warning)">exists</span>' : ''}
                 </div>

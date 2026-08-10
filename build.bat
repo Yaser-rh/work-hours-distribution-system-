@@ -15,12 +15,15 @@ pyinstaller --noconfirm ^
     --name "Dienstplane" ^
     --add-data "web;web" ^
     --collect-all "customtkinter" ^
+    --collect-all "ortools" ^
     --hidden-import "flask" ^
     --hidden-import "flask_cors" ^
-    --hidden-import "ortools" ^
     --hidden-import "docx" ^
     --hidden-import "reportlab" ^
     --hidden-import "win32com" ^
+    --hidden-import "jinja2" ^
+    --hidden-import "werkzeug" ^
+    --hidden-import "sqlite3" ^
     main.py
 
 echo.
@@ -28,3 +31,5 @@ echo ================================================
 echo  Build Complete! Executable saved in dist\Dienstplane.exe
 echo ================================================
 pause
+
+

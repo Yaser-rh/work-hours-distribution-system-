@@ -95,7 +95,7 @@ def delete_city(city_id: int) -> None:
 # EMPLOYEE CRUD Operations
 # ==============================================================================
 
-def add_employee(name: str, personal_id: str) -> int:
+def add_employee(name: str, personal_id: str, city_id: Optional[int] = None) -> int:
     """
     Adds a new employee to the database.
     Returns the ID of the newly created employee.
@@ -104,28 +104,49 @@ def add_employee(name: str, personal_id: str) -> int:
     try:
         cursor = conn.cursor()
         cursor.execute(
-            "INSERT INTO employee (name, personal_id) VALUES (?, ?)",
-            (name, personal_id)
+            "INSERT INTO employee (name, personal_id, city_id) VALUES (?, ?, ?)",
+            (name, personal_id, city_id)
         )
         conn.commit()
         return cursor.lastrowid
     finally:
         conn.close()
 
-def get_employees() -> List[Dict[str, Any]]:
+def get_employees(city_id: Optional[int] = None) -> List[Dict[str, Any]]:
     """
-    Retrieves all employees, ordered alphabetically by name.
+    Retrieves employees, ordered alphabetically by name.
+    If city_id is specified, filters by drivers assigned to that city (or unassigned).
     """
+    query = """
+        SELECT e.id, e.name, e.personal_id, e.city_id, c.name AS city_name
+        FROM employee e
+        LEFT JOIN city c ON e.city_id = c.id
+    """
+    params = []
+    if city_id is not None:
+        query += " WHERE e.city_id = ? OR e.city_id IS NULL"
+        params.append(city_id)
+    query += " ORDER BY e.name"
+
     conn = get_connection()
     try:
         cursor = conn.cursor()
-        cursor.execute("SELECT id, name, personal_id FROM employee ORDER BY name")
+        cursor.execute(query, params)
         rows = cursor.fetchall()
-        return [{"id": r[0], "name": r[1], "personal_id": r[2]} for r in rows]
+        return [
+            {
+                "id": r[0],
+                "name": r[1],
+                "personal_id": r[2],
+                "city_id": r[3],
+                "city_name": r[4]
+            }
+            for r in rows
+        ]
     finally:
         conn.close()
 
-def update_employee(emp_id: int, name: str, personal_id: str) -> None:
+def update_employee(emp_id: int, name: str, personal_id: str, city_id: Optional[int] = None) -> None:
     """
     Updates an employee's details.
     """
@@ -133,8 +154,8 @@ def update_employee(emp_id: int, name: str, personal_id: str) -> None:
     try:
         cursor = conn.cursor()
         cursor.execute(
-            "UPDATE employee SET name = ?, personal_id = ? WHERE id = ?",
-            (name, personal_id, emp_id)
+            "UPDATE employee SET name = ?, personal_id = ?, city_id = ? WHERE id = ?",
+            (name, personal_id, city_id, emp_id)
         )
         conn.commit()
     finally:
@@ -150,6 +171,79 @@ def delete_employee(emp_id: int) -> None:
         cursor = conn.cursor()
         cursor.execute("DELETE FROM employee WHERE id = ?", (emp_id,))
         conn.commit()
+    finally:
+        conn.close()
+
+def update_employee_city(emp_id: int, city_id: Optional[int]) -> None:
+    """
+    Updates only the city_id for a driver.
+    """
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute("UPDATE employee SET city_id = ? WHERE id = ?", (city_id, emp_id))
+        conn.commit()
+    finally:
+        conn.close()
+
+def get_auto_assign_preview() -> List[Dict[str, Any]]:
+    """
+    Analyzes historical timesheets for every driver to propose city assignments.
+    Returns preview data for review before committing mass updates.
+    """
+    employees = get_employees()
+    conn = get_connection()
+    preview = []
+    try:
+        cursor = conn.cursor()
+        for emp in employees:
+            cursor.execute("""
+                SELECT t.city_id, c.name, COUNT(*) AS cnt
+                FROM timesheet t
+                JOIN city c ON t.city_id = c.id
+                WHERE t.employee_id = ?
+                GROUP BY t.city_id
+                ORDER BY cnt DESC, MAX(t.id) DESC
+                LIMIT 1
+            """, (emp['id'],))
+            top_ts = cursor.fetchone()
+            
+            proposed_city_id = top_ts[0] if top_ts else emp['city_id']
+            proposed_city_name = top_ts[1] if top_ts else emp['city_name']
+            ts_count = top_ts[2] if top_ts else 0
+
+            preview.append({
+                "driver_id": emp['id'],
+                "driver_name": emp['name'],
+                "personal_id": emp['personal_id'],
+                "current_city_id": emp['city_id'],
+                "current_city_name": emp['city_name'],
+                "proposed_city_id": proposed_city_id,
+                "proposed_city_name": proposed_city_name,
+                "timesheet_count": ts_count
+            })
+        return preview
+    finally:
+        conn.close()
+
+def mass_update_driver_cities(assignments: List[Dict[str, Any]]) -> int:
+    """
+    Updates city assignments for multiple drivers in a single transaction.
+    Expects a list of dicts: [{"driver_id": int, "city_id": int | None}, ...]
+    Returns number of drivers updated.
+    """
+    conn = get_connection()
+    updated_count = 0
+    try:
+        with conn:
+            cursor = conn.cursor()
+            for item in assignments:
+                driver_id = item.get('driver_id')
+                city_id = item.get('city_id')
+                if driver_id:
+                    cursor.execute("UPDATE employee SET city_id = ? WHERE id = ?", (city_id, driver_id))
+                    updated_count += cursor.rowcount
+        return updated_count
     finally:
         conn.close()
 
