@@ -6,7 +6,7 @@ A unified, high-performance scheduling and timesheet generator optimized for Ger
 
 ## 🚀 Application Modes
 
-The application features a unified launcher (`main.py`) written in CustomTkinter. From here, you can launch three distinct interfaces:
+The application features a unified launcher (`main.py`) written in CustomTkinter. From here, you can launch two distinct interfaces:
 
 ### 1. Simple One-Function UI (Standalone)
 A lightweight, zero-dependency desktop GUI designed for individual drivers.
@@ -27,9 +27,6 @@ A modern, responsive web dashboard built for multi-driver management.
   * Staggers start times and balances delivery coverage (optimizing staggering penalties, daily distribution, and hourly smoothing).
 * **Dependencies**: `flask`, `flask-cors`, `ortools`, `sqlite3`.
 
-### 3. Legacy Desktop UI
-The original Tkinter desktop GUI for database administration and timesheet distribution.
-
 ---
 
 ## 🛠️ Getting Started
@@ -48,13 +45,19 @@ python main.py
 ```
 
 ### Compiling to Windows Executable
-You can compile the entire application (including the web assets and solver engines) into a standalone, single-file Windows executable:
-1. Open PowerShell in the project directory.
-2. Run the build script:
-   ```powershell
-   ./build.ps1
-   ```
-3. The standalone `.exe` will be located in the `dist/` directory. On execution, it will run without python installed and automatically initialize its local database `timesheets.db` in whichever folder you run it.
+You can compile the entire application (including all web assets, CustomTkinter UI, and solver engines) into a standalone, single-file Windows executable:
+
+**Using PowerShell:**
+```powershell
+./build.ps1
+```
+
+**Using Command Prompt / Batch:**
+```cmd
+build.bat
+```
+
+The standalone executable `ShiftPlan.exe` will be saved in the `dist/` directory. On execution, it runs without requiring Python to be installed and automatically initializes its local database `timesheets.db` in whichever folder it is run.
 
 ### Running Tests
 Execute the automated test suite (including simple solver validations, database migrations, and Word exporter outputs) using pytest:
@@ -74,4 +77,3 @@ python -m pytest tests/
 * **`db/`** - Database connector, schemas, and models.
 * **`web/`** - Static web frontend files (HTML/CSS/JS) served by Flask.
 * **`tests/`** - Pytest unit test modules.
-* **`legacy code/`** - Original desktop source code, developer guide, analysis reports, and documentation.

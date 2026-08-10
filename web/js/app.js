@@ -58,8 +58,10 @@ const App = {
             cities: 'Cities',
             drivers: 'Drivers',
             timesheets: 'Timesheets',
+            'simple-generator': 'Simple Generator',
             analytics: 'Analytics',
-            logs: 'System Logs'
+            logs: 'System Logs',
+            'user-guide': 'User Guide'
         };
         document.getElementById('breadcrumb').innerHTML =
             `<span class="breadcrumb-item">${names[page] || page}</span>`;
@@ -67,7 +69,7 @@ const App = {
         // Render page
         const container = document.getElementById('pageContainer');
         container.innerHTML = '';
-        if (page === 'timesheets' || page === 'drivers' || page === 'analytics' || page === 'logs') {
+        if (page === 'timesheets' || page === 'drivers' || page === 'analytics' || page === 'logs' || page === 'simple-generator') {
             container.className = 'page-container page-enter fixed-layout';
         } else {
             container.className = 'page-container page-enter';
@@ -78,6 +80,145 @@ const App = {
         } else {
             container.innerHTML = `<div class="empty-state"><div class="empty-state-icon">🚧</div><div class="empty-state-title">Page not found</div></div>`;
         }
+
+        // Restore global solver UI if solving
+        if (this.solver && this.solver.isSolving) {
+            this.solver.updateUI();
+        }
+    },
+
+    // ---- Global Solver Manager ----
+    solver: {
+        isSolving: false,
+        startTime: 0,
+        timeoutLimit: 30,
+        timerInterval: null,
+        timesheetIds: [],
+
+        start(timesheetIds, timeoutLimit = 30) {
+            this.isSolving = true;
+            this.startTime = Date.now();
+            this.timeoutLimit = timeoutLimit;
+            this.timesheetIds = timesheetIds;
+
+            const banner = document.getElementById('globalSolverBanner');
+            if (banner) banner.classList.remove('hidden');
+
+            if (this.timerInterval) clearInterval(this.timerInterval);
+            this.updateUI();
+
+            this.timerInterval = setInterval(() => {
+                this.updateUI();
+            }, 1000);
+        },
+
+        stop(result = null, error = null) {
+            this.isSolving = false;
+            if (this.timerInterval) {
+                clearInterval(this.timerInterval);
+                this.timerInterval = null;
+            }
+
+            const banner = document.getElementById('globalSolverBanner');
+            if (banner) banner.classList.add('hidden');
+
+            if (error) {
+                App.toast('Solver error: ' + (error.message || error), 'error');
+            } else if (result) {
+                if (result.status === 'failed') {
+                    App.toast('Solver failed to find a feasible schedule.', 'error');
+                } else {
+                    App.toast(result.message || 'Solver completed successfully.', 'success', 6000);
+                }
+            }
+
+            if (App.currentPage === 'timesheets' && App.pages.timesheets && App.pages.timesheets.loadTimesheets) {
+                App.pages.timesheets.loadTimesheets();
+                if (App.pages.timesheets.selectedTs) App.pages.timesheets.selectTimesheet(App.pages.timesheets.selectedTs);
+            }
+        },
+
+        updateUI() {
+            if (!this.isSolving) return;
+
+            const elapsedSec = Math.floor((Date.now() - this.startTime) / 1000);
+            const timerBadge = document.getElementById('globalSolverTimer');
+            if (timerBadge) {
+                const mm = String(Math.floor(elapsedSec / 60)).padStart(2, '0');
+                const ss = String(elapsedSec % 60).padStart(2, '0');
+                timerBadge.textContent = `${mm}:${ss} / ${Math.round(this.timeoutLimit)}s`;
+            }
+
+            const fill = document.getElementById('globalProgressBarFill');
+            if (fill) {
+                const pct = Math.min(100, (elapsedSec / this.timeoutLimit) * 100);
+                fill.style.width = `${pct}%`;
+            }
+
+            if (App.currentPage === 'timesheets') {
+                const btn = document.getElementById('tsDistributeBtn');
+                if (btn) {
+                    btn.disabled = true;
+                    btn.textContent = `⏳ Solving... (${elapsedSec}s)`;
+                }
+                const p1 = document.getElementById('tsSolverProgress');
+                const p2 = document.getElementById('tsListSolverProgress');
+                if (p1) p1.classList.remove('hidden');
+                if (p2) p2.classList.remove('hidden');
+            }
+        }
+    },
+
+    // ---- Global Export Preferences Manager ----
+    getExportConfig() {
+        return {
+            remember: localStorage.getItem('shiftplan_remember_dir') === 'true',
+            format: localStorage.getItem('shiftplan_export_format') || 'docx',
+            dir: localStorage.getItem('shiftplan_export_dir') || ''
+        };
+    },
+
+    setExportConfig(config) {
+        if (config.remember !== undefined) localStorage.setItem('shiftplan_remember_dir', config.remember ? 'true' : 'false');
+        if (config.format) localStorage.setItem('shiftplan_export_format', config.format);
+        if (config.dir !== undefined) localStorage.setItem('shiftplan_export_dir', config.dir);
+    },
+
+    toggleRememberDir(remember) {
+        this.setExportConfig({ remember: !!remember });
+        const textEl = document.getElementById('rememberStatusHint');
+        if (textEl) {
+            textEl.textContent = remember
+                ? 'Slid RIGHT: Saved directory will be remembered automatically for all exports.'
+                : 'Slid LEFT: Ask for format & location each time.';
+        }
+        App.toast(remember ? 'Save location will be remembered.' : 'Will ask save location each time.', 'info');
+    },
+
+    promptChangeDir(callback) {
+        const current = this.getExportConfig().dir;
+        App.openModal(`
+            <div class="modal-header">
+                <span class="modal-title">Set Save Directory</span>
+                <button class="modal-close" onclick="App.closeModal()">✕</button>
+            </div>
+            <div class="modal-body">
+                <p style="color:var(--text-secondary);margin-bottom:12px;">Specify the absolute folder path on your computer where exports will be saved (e.g. <code>C:\\Users\\Username\\Downloads</code>):</p>
+                <input class="form-input" id="inputCustomDir" value="${current}" placeholder="e.g. C:\\Users\\Username\\Desktop\\Exports">
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-ghost" onclick="App.closeModal()">Cancel</button>
+                <button class="btn btn-primary" id="btnSaveDir">Save Location</button>
+            </div>
+        `);
+
+        document.getElementById('btnSaveDir').addEventListener('click', () => {
+            const val = document.getElementById('inputCustomDir').value.trim();
+            this.setExportConfig({ dir: val });
+            App.closeModal();
+            App.toast(val ? `Save directory set to: ${val}` : 'Reset to default downloads folder.', 'success');
+            if (typeof callback === 'function') callback(val);
+        });
     },
 
     registerPage(name, handler) {

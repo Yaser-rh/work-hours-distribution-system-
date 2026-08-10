@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Driver Shift & Timesheet Distribution System</title>
+    <title>Dienstplane — Driver Shift & Timesheet Distribution System</title>
     <meta name="description" content="Professional scheduling tool for delivery fleet managers — optimize driver shifts with constraint programming.">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -20,7 +20,7 @@
                     <rect width="32" height="32" rx="8" fill="var(--accent-primary)"/>
                     <path d="M8 12h16M8 16h12M8 20h8M22 18l4 4-4 4" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
                 </svg>
-                <span class="logo-text">ShiftPlan</span>
+                <span class="logo-text">Dienstplane</span>
             </div>
         </div>
 
@@ -41,6 +41,10 @@
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14,2 14,8 20,8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
                 <span>Timesheets</span>
             </a>
+            <a href="#simple-generator" class="nav-item" data-page="simple-generator">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                <span>Simple Generator</span>
+            </a>
             <a href="#analytics" class="nav-item" data-page="analytics">
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
                 <span>Analytics</span>
@@ -48,6 +52,10 @@
             <a href="#logs" class="nav-item" data-page="logs">
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
                 <span>System Logs</span>
+            </a>
+            <a href="#user-guide" class="nav-item" data-page="user-guide">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+                <span>User Guide</span>
             </a>
         </nav>
 
@@ -71,6 +79,12 @@
             <div class="breadcrumb" id="breadcrumb">
                 <span class="breadcrumb-item">Dashboard</span>
             </div>
+            <div id="globalSolverBanner" class="global-solver-banner hidden">
+                <span class="solver-pulse-dot"></span>
+                <span id="globalSolverText" class="global-solver-text">⚡ CP-SAT Solver Running...</span>
+                <span id="globalSolverTimer" class="solver-timer-badge">00:00 / 30s</span>
+                <div class="global-progress-bar"><div id="globalProgressBarFill" class="fill"></div></div>
+            </div>
         </header>
 
         <!-- Page Container -->
@@ -93,7 +107,9 @@
     <script src="/js/pages/cities.js"></script>
     <script src="/js/pages/drivers.js"></script>
     <script src="/js/pages/timesheets.js"></script>
+    <script src="/js/pages/simple_generator.js"></script>
     <script src="/js/pages/analytics.js"></script>
     <script src="/js/pages/logs.js"></script>
+    <script src="/js/pages/user_guide.js"></script>
 </body>
 </html>

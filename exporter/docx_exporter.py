@@ -173,3 +173,160 @@ def generate_docx(
     
     doc.save(output_path)
     return os.path.abspath(output_path)
+
+def convert_docx_to_pdf(docx_path: str, pdf_path: str = None) -> str:
+    """
+    Converts a .docx file to a .pdf file.
+    First attempts Word COM object (win32com) on Windows.
+    """
+    if pdf_path is None:
+        pdf_path = os.path.splitext(docx_path)[0] + ".pdf"
+
+    abs_docx = os.path.abspath(docx_path)
+    abs_pdf = os.path.abspath(pdf_path)
+
+    # 1. Try win32com (MS Word COM)
+    try:
+        import win32com.client
+        word = win32com.client.Dispatch("Word.Application")
+        word.Visible = False
+        try:
+            doc = word.Documents.Open(abs_docx)
+            doc.SaveAs(abs_pdf, FileFormat=17)  # 17 = wdFormatPDF
+            doc.Close()
+            return abs_pdf
+        finally:
+            word.Quit()
+    except Exception:
+        pass
+
+    return abs_pdf
+
+def generate_pdf(
+    employee_name: str,
+    personal_id: str,
+    city_name: str,
+    year: int,
+    month: int,
+    daily_entries: list[dict],
+    target_hours: float,
+    output_path: str = None
+) -> str:
+    """
+    Generates a styled Tätigkeitsnachweis PDF document.
+    """
+    if output_path is None:
+        clean_name = "".join(c for c in employee_name if c.isalnum() or c in (" ", "_", "-")).strip().replace(" ", "_")
+        output_path = f"timesheet_{clean_name}_{month:02d}_{year}.pdf"
+
+    abs_pdf = os.path.abspath(output_path)
+    docx_temp_path = abs_pdf.replace(".pdf", "_temp.docx")
+
+    generate_docx(employee_name, personal_id, city_name, year, month, daily_entries, target_hours, docx_temp_path)
+
+    pdf_res = convert_docx_to_pdf(docx_temp_path, abs_pdf)
+
+    # If win32com conversion succeeded and created file, clean up temp docx
+    if os.path.exists(abs_pdf) and os.path.getsize(abs_pdf) > 0:
+        if os.path.exists(docx_temp_path):
+            try: os.remove(docx_temp_path)
+            except OSError: pass
+        return abs_pdf
+
+    # Fallback to ReportLab PDF generation if Word COM was unavailable or failed
+    try:
+        total_hours_sum = sum(e.get("hours_worked", 0.0) for e in daily_entries)
+        pdf_res = _generate_pdf_reportlab(employee_name, personal_id, city_name, year, month, daily_entries, total_hours_sum, abs_pdf)
+    finally:
+        if os.path.exists(docx_temp_path):
+            try: os.remove(docx_temp_path)
+            except OSError: pass
+
+    return pdf_res
+
+def _generate_pdf_reportlab(employee_name, personal_id, city_name, year, month, daily_entries, total_hours_sum, output_path):
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib import colors
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.units import inch
+
+    doc = SimpleDocTemplate(
+        output_path,
+        pagesize=A4,
+        rightMargin=0.8*inch, leftMargin=0.8*inch,
+        topMargin=0.6*inch, bottomMargin=0.6*inch
+    )
+
+    styles = getSampleStyleSheet()
+    title_style = ParagraphStyle(
+        'TitleStyle',
+        parent=styles['Heading1'],
+        fontName='Helvetica-Bold',
+        fontSize=20,
+        alignment=1,
+        spaceAfter=12
+    )
+    meta_style = ParagraphStyle(
+        'MetaStyle',
+        parent=styles['Normal'],
+        fontName='Helvetica',
+        fontSize=11,
+        spaceAfter=4
+    )
+
+    elements = []
+    elements.append(Paragraph("Tätigkeitsnachweis", title_style))
+    elements.append(Paragraph(f"<b>Name Mitarbeiter /-in:</b> <u>{employee_name}</u>", meta_style))
+    elements.append(Paragraph(f"<b>Personal Nummer:</b> <u>{personal_id}</u>", meta_style))
+    elements.append(Paragraph(f"<b>Stadt:</b> <u>{city_name}</u>", meta_style))
+    elements.append(Spacer(1, 12))
+
+    headers = ["Datum", "Arbeitsbeginn", "Arbeitsende", "Pause", "Arbeitszeit", "Sonstiges"]
+    table_data = [headers]
+
+    sorted_entries = sorted(daily_entries, key=lambda e: e.get("work_date", ""))
+    for entry in sorted_entries:
+        work_date = entry.get("work_date", "")
+        formatted_date_str = work_date
+        try:
+            if '-' in work_date:
+                dt = datetime.strptime(work_date, "%Y-%m-%d")
+                formatted_date_str = dt.strftime("%d.%m.%Y")
+            elif '.' in work_date:
+                dt = datetime.strptime(work_date, "%d.%m.%Y")
+                formatted_date_str = dt.strftime("%d.%m.%Y")
+        except ValueError:
+            pass
+
+        hours_val = entry.get("hours_worked", 0.0)
+        hours_str = format_hours_german(hours_val)
+        start_val = entry.get("start_time", "") if hours_val > 0.0 else ""
+        end_val = entry.get("end_time", "") if hours_val > 0.0 else ""
+        break_val = entry.get("break_duration", "")
+        if hours_val == 0.0 or break_val == "00:00" or not break_val:
+            break_val = ""
+        remarks = entry.get("remarks", "") or ""
+
+        table_data.append([formatted_date_str, start_val, end_val, break_val, hours_str, remarks])
+
+    col_widths = [1.2*inch, 1.1*inch, 1.1*inch, 0.9*inch, 1.1*inch, 1.5*inch]
+    t = Table(table_data, colWidths=col_widths)
+    t.setStyle(TableStyle([
+        ('GRID', (0,0), (-1,-1), 0.5, colors.black),
+        ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+        ('ALIGN', (0,0), (-2,-1), 'CENTER'),
+        ('ALIGN', (-1,0), (-1,-1), 'LEFT'),
+        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+    ]))
+    elements.append(t)
+    elements.append(Spacer(1, 12))
+
+    total_hours_formatted = f"{total_hours_sum:.1f}".replace(".", ",")
+    elements.append(Paragraph(f"<b>Summe der Arbeitsstunden im Monat:</b> <u>{total_hours_formatted} Stunden</u>", meta_style))
+    elements.append(Spacer(1, 16))
+    elements.append(Paragraph("Datum: ______________________ &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; Unterschrift: ______________________", meta_style))
+
+    doc.build(elements)
+    return os.path.abspath(output_path)
+

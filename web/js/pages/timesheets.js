@@ -465,27 +465,20 @@ App.registerPage('timesheets', {
                     return;
                 }
 
-                // Show progress
-                this.setSolverProgressActive(true);
-
                 const timeoutLimit = parseFloat(document.getElementById('tsTimeoutLimit')?.value) || 30.0;
                 const otherIds = allTs.map(t => t.id);
-                const result = await App.api('/api/timesheets/solve', {
-                    method: 'POST',
-                    body: { timesheet_ids: [...otherIds, tsId], redistribute_around: tsId, timeout: timeoutLimit }
-                });
+                const solveIds = [...otherIds, tsId];
+                App.solver.start(solveIds, timeoutLimit);
 
-                this.setSolverProgressActive(false);
-
-                if (result.status === 'failed') {
-                    App.toast('Solver failed to find a feasible redistribution.', 'error');
-                } else {
-                    App.toast(`Redistribution complete: ${result.altered_count} schedule(s) updated in ${result.solve_time}s.`, 'success', 6000);
+                try {
+                    const result = await App.api('/api/timesheets/solve', {
+                        method: 'POST',
+                        body: { timesheet_ids: solveIds, redistribute_around: tsId, timeout: timeoutLimit }
+                    });
+                    App.solver.stop(result);
+                } catch (e) {
+                    App.solver.stop(null, e);
                 }
-
-                await this.selectTimesheet(tsId);
-                await this.loadTimesheets();
-
             } catch (e) {
                 App.toast('Redistribution failed: ' + e.message, 'error');
             }
@@ -507,33 +500,18 @@ App.registerPage('timesheets', {
             return;
         }
 
-        // Show progress
-        this.setSolverProgressActive(true);
-
-        const btn = document.getElementById('tsDistributeBtn');
-        if (btn) { btn.disabled = true; btn.textContent = '⏳ Solving...'; }
+        const timeoutLimit = parseFloat(document.getElementById('tsTimeoutLimit')?.value) || 30.0;
+        App.solver.start(ids, timeoutLimit);
 
         try {
-            const timeoutLimit = parseFloat(document.getElementById('tsTimeoutLimit')?.value) || 30.0;
             const result = await App.api('/api/timesheets/solve', {
                 method: 'POST',
                 body: { timesheet_ids: ids, timeout: timeoutLimit }
             });
 
-            if (result.status === 'failed') {
-                App.toast('Solver failed to find a feasible schedule.', 'error');
-            } else {
-                App.toast(result.message, 'success', 5000);
-            }
-
-            await this.loadTimesheets();
-            if (this.selectedTs) await this.selectTimesheet(this.selectedTs);
-
+            App.solver.stop(result);
         } catch (e) {
-            App.toast('Solver error: ' + e.message, 'error');
-        } finally {
-            this.setSolverProgressActive(false);
-            if (btn) { btn.disabled = false; btn.textContent = '⚡ Distribute Selected'; }
+            App.solver.stop(null, e);
         }
     },
 
@@ -749,31 +727,113 @@ App.registerPage('timesheets', {
     },
 
     // ---- Export ----
-    async exportTimesheet(id) {
+    async exportTimesheet(id, format = 'docx', saveDir = null) {
         try {
-            const res = await App.api(`/api/timesheets/${id}/export`, { method: 'POST' });
+            const dirParam = saveDir ? `&save_dir=${encodeURIComponent(saveDir)}` : '';
+            const res = await App.api(`/api/timesheets/${id}/export?format=${format}${dirParam}`, { method: 'POST' });
             const blob = await res.blob();
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
-            a.download = res.headers?.get('content-disposition')?.split('filename=')[1] || 'timesheet.docx';
+            const ext = format === 'pdf' ? '.pdf' : '.docx';
+            a.download = res.headers?.get('content-disposition')?.split('filename=')[1] || `timesheet${ext}`;
             a.click();
             URL.revokeObjectURL(url);
-            App.toast('Exported to Word document.', 'success');
+            App.toast(`Exported to ${format.toUpperCase()} document.`, 'success');
         } catch (e) {
             App.toast('Export failed: ' + e.message, 'error');
         }
     },
 
-    async exportSelected() {
+    async exportSelected(forceModal = false) {
         const ids = this.selectedIds.size > 0 ? [...this.selectedIds] : (this.selectedTs ? [this.selectedTs] : []);
         if (ids.length === 0) {
             App.toast('Select or open a timesheet to export.', 'warning');
             return;
         }
-        for (const id of ids) {
-            await this.exportTimesheet(id);
+
+        const cfg = App.getExportConfig();
+
+        if (cfg.remember && !forceModal) {
+            for (const id of ids) {
+                await this.exportTimesheet(id, cfg.format, cfg.dir);
+            }
+            return;
         }
+
+        const displayDir = cfg.dir ? cfg.dir : 'Default (Downloads folder)';
+
+        App.openModal(`
+            <div class="modal-header">
+                <span class="modal-title">Export Options</span>
+                <button class="modal-close" onclick="App.closeModal()">✕</button>
+            </div>
+            <div class="modal-body">
+                <p style="color:var(--text-secondary);margin-bottom:16px;">Choose export format and save location for ${ids.length} timesheet(s):</p>
+                
+                <div class="flex flex-col gap-12 mb-16">
+                    <button class="quick-action-btn" id="btnExportWord">
+                        <span style="font-size:1.5rem">📄</span>
+                        <div style="flex:1;text-align:left">
+                            <div style="font-weight:600">Microsoft Word (.docx)</div>
+                            <div style="font-size:0.78rem;color:var(--text-secondary)">Standard editable Word document</div>
+                        </div>
+                    </button>
+                    <button class="quick-action-btn" id="btnExportPdf">
+                        <span style="font-size:1.5rem">📕</span>
+                        <div style="flex:1;text-align:left">
+                            <div style="font-weight:600">PDF Document (.pdf)</div>
+                            <div style="font-size:0.78rem;color:var(--text-secondary)">Printable PDF document</div>
+                        </div>
+                    </button>
+                    <button class="quick-action-btn" id="btnChangeDir">
+                        <span style="font-size:1.5rem">📂</span>
+                        <div style="flex:1;text-align:left">
+                            <div style="font-weight:600">Change Save Location</div>
+                            <div style="font-size:0.78rem;color:var(--text-tertiary)" id="lblSaveLocation">Current: ${displayDir}</div>
+                        </div>
+                    </button>
+                </div>
+
+                <div style="background:var(--bg-primary);padding:12px 16px;border-radius:8px;display:flex;align-items:center;justify-content:space-between;border:1px solid var(--border)">
+                    <div>
+                        <div style="font-weight:600;font-size:0.88rem">Remember Save Directory</div>
+                        <div style="font-size:0.75rem;color:var(--text-secondary)" id="rememberStatusHint">
+                            ${cfg.remember ? 'Slid RIGHT: Saved directory will be remembered automatically for all exports.' : 'Slid LEFT: Ask for format & location each time.'}
+                        </div>
+                    </div>
+                    <label class="toggle-slider-switch">
+                        <input type="checkbox" id="chkRememberExportDir" ${cfg.remember ? 'checked' : ''} onchange="App.toggleRememberDir(this.checked)">
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>
+            </div>
+        `);
+
+        document.getElementById('btnExportWord').addEventListener('click', async () => {
+            const currentCfg = App.getExportConfig();
+            App.setExportConfig({ format: 'docx' });
+            App.closeModal();
+            for (const id of ids) {
+                await this.exportTimesheet(id, 'docx', currentCfg.dir);
+            }
+        });
+
+        document.getElementById('btnExportPdf').addEventListener('click', async () => {
+            const currentCfg = App.getExportConfig();
+            App.setExportConfig({ format: 'pdf' });
+            App.closeModal();
+            for (const id of ids) {
+                await this.exportTimesheet(id, 'pdf', currentCfg.dir);
+            }
+        });
+
+        document.getElementById('btnChangeDir').addEventListener('click', () => {
+            App.promptChangeDir((newDir) => {
+                const lbl = document.getElementById('lblSaveLocation');
+                if (lbl) lbl.textContent = 'Current: ' + (newDir || 'Default (Downloads folder)');
+            });
+        });
     },
 
     // ---- Delete ----
@@ -859,6 +919,7 @@ App.registerPage('timesheets', {
                             <input type="checkbox" id="newTsSelectAll" onchange="App.pages.timesheets.toggleNewSelectAll()"> Select All
                         </label>
                     </div>
+                    <input type="text" class="form-input mb-8" id="newTsDriverSearch" placeholder="🔍 Search driver by name or ID..." oninput="App.pages.timesheets.filterDriverList()" style="margin-bottom:8px">
                     <div class="checkbox-list" id="newTsDriverList"></div>
                 </div>
                 <div class="form-hint">Target must be 10.0–208.0h in 0.5h increments.</div>
@@ -909,6 +970,21 @@ App.registerPage('timesheets', {
                 </div>
             `;
         }).join('');
+
+        this.filterDriverList();
+    },
+
+    filterDriverList() {
+        const query = (document.getElementById('newTsDriverSearch')?.value || '').toLowerCase().trim();
+        const items = document.querySelectorAll('#newTsDriverList .checkbox-item');
+        items.forEach(item => {
+            const text = item.textContent.toLowerCase();
+            if (!query || text.includes(query)) {
+                item.style.display = 'flex';
+            } else {
+                item.style.display = 'none';
+            }
+        });
     },
 
     toggleHoursMode() {
@@ -919,7 +995,12 @@ App.registerPage('timesheets', {
 
     toggleNewSelectAll() {
         const checked = document.getElementById('newTsSelectAll')?.checked;
-        document.querySelectorAll('.newTsDriverCheck:not(:disabled)').forEach(cb => cb.checked = checked);
+        document.querySelectorAll('#newTsDriverList .checkbox-item').forEach(item => {
+            if (item.style.display !== 'none') {
+                const cb = item.querySelector('.newTsDriverCheck:not(:disabled)');
+                if (cb) cb.checked = checked;
+            }
+        });
     },
 
     async createTimesheets() {

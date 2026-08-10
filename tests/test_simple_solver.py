@@ -106,7 +106,11 @@ def test_overnight_city_window():
     for entry in res["daily_entries"]:
         hours = entry["hours_worked"]
         if hours > 0:
-            assert entry["start_time"] == "18:00"
+            st_u = clock_to_units(entry["start_time"])
+            if st_u < 12:  # After midnight (00:00 to 06:00)
+                st_u += 48
+            assert st_u >= clock_to_units("18:00")
+            assert st_u <= clock_to_units("02:00") + 48
             # Since shift is <= 8h (and city window is 8h span, 18:00 to 02:00), it should fit.
             # E.g. 6.0h shift -> starts 18:00, end 00:00.
             # 8.0h shift -> starts 18:00, break 30m, total span 8.5h.

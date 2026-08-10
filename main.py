@@ -53,50 +53,24 @@ class LauncherApp(ctk.CTk):
         
         self.subtitle_label = ctk.CTkLabel(
             self.main_frame,
-            text="Choose an option to launch the application interface",
+            text="Launch the ShiftPlan Web System",
             text_color="#718096",
             font=ctk.CTkFont(family="Segoe UI", size=13, slant="italic")
         )
         self.subtitle_label.pack(pady=(0, 30))
         
-        # Button 1: Legacy Desktop UI
-        self.btn_legacy = ctk.CTkButton(
-            self.main_frame,
-            text="1. Legacy Desktop UI",
-            font=ctk.CTkFont(family="Segoe UI", size=15, weight="bold"),
-            height=50,
-            width=350,
-            fg_color="#4a5568",
-            hover_color="#2d3748",
-            command=self.run_legacy_ui
-        )
-        self.btn_legacy.pack(pady=10)
-        
-        # Button 2: Simple One-Function UI
-        self.btn_simple = ctk.CTkButton(
-            self.main_frame,
-            text="2. Simple One-Function UI",
-            font=ctk.CTkFont(family="Segoe UI", size=15, weight="bold"),
-            height=50,
-            width=350,
-            fg_color="#1a202c",
-            hover_color="#2d3748",
-            command=self.run_simple_ui
-        )
-        self.btn_simple.pack(pady=10)
-        
-        # Button 3: Flask Web UI (Recommended)
+        # Primary Launch Button: Web UI
         self.btn_web = ctk.CTkButton(
             self.main_frame,
-            text="3. Web UI (Flask Server)",
-            font=ctk.CTkFont(family="Segoe UI", size=15, weight="bold"),
-            height=50,
-            width=350,
+            text="🚀 Launch ShiftPlan System (Web UI)",
+            font=ctk.CTkFont(family="Segoe UI", size=16, weight="bold"),
+            height=55,
+            width=380,
             fg_color="#1a365d",
             hover_color="#2b6cb0",
             command=self.run_web_ui
         )
-        self.btn_web.pack(pady=10)
+        self.btn_web.pack(pady=20)
         
         # Footer
         self.footer_label = ctk.CTkLabel(
@@ -106,62 +80,6 @@ class LauncherApp(ctk.CTk):
             font=ctk.CTkFont(family="Segoe UI", size=11)
         )
         self.footer_label.pack(side="bottom", pady=15)
-
-    def run_legacy_ui(self):
-        self.withdraw()
-        
-        # Ensure 'legacy code' folder is in search path
-        legacy_path = os.path.join(ROOT_DIR, "legacy code")
-        if legacy_path not in sys.path:
-            sys.path.append(legacy_path)
-            
-        try:
-            from ui.main_gui import TimesheetAppGUI
-            
-            legacy_root = ctk.CTk()
-            legacy_root.title("Timesheet Generator - Legacy Desktop UI")
-            legacy_root.geometry("1150x800")
-            legacy_root.minsize(1050, 700)
-            
-            app = TimesheetAppGUI(legacy_root)
-            
-            def on_close():
-                legacy_root.destroy()
-                self.deiconify()
-                
-            legacy_root.protocol("WM_DELETE_WINDOW", on_close)
-            legacy_root.mainloop()
-        except Exception as e:
-            self.deiconify()
-            from tkinter import messagebox
-            messagebox.showerror("Legacy UI Error", f"Failed to launch Legacy Desktop UI:\n{e}")
-
-    def run_simple_ui(self):
-        self.withdraw()
-        
-        try:
-            from simple.simple_gui import SimpleAppGUI
-            
-            simple_window = ctk.CTk()
-            app = SimpleAppGUI(simple_window)
-            
-            # Center simple window
-            sw = 1000
-            sh = 680
-            sx = (self.winfo_screenwidth() // 2) - (sw // 2)
-            sy = (self.winfo_screenheight() // 2) - (sh // 2)
-            simple_window.geometry(f"{sw}x{sh}+{sx}+{sy}")
-            
-            def on_close():
-                simple_window.destroy()
-                self.deiconify()
-                
-            simple_window.protocol("WM_DELETE_WINDOW", on_close)
-            simple_window.mainloop()
-        except Exception as e:
-            self.deiconify()
-            from tkinter import messagebox
-            messagebox.showerror("Simple UI Error", f"Failed to launch Simple UI:\n{e}")
 
     def run_web_ui(self):
         self.withdraw()

@@ -28,6 +28,9 @@ sample_timesheet.docx
 .coverage
 htmlcov/
 
+# Generated Exports
+exports/
+
 # Editor / OS settings
 .idea/
 .vscode/

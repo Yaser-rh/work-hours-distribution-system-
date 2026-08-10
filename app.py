@@ -21,6 +21,7 @@ from db.database import initialize_database
 import db.models as models
 import solver.sat_solver as sat_solver
 import exporter.docx_exporter as docx_exporter
+import simple.simple_solver as simple_solver
 
 # System logs list to keep logs in memory
 system_logs = []
@@ -423,24 +424,110 @@ def api_export_timesheet(ts_id):
     if not detail:
         return jsonify({'error': 'Timesheet not found.'}), 404
 
-    # Generate file in a temp location
+    export_format = request.args.get('format', 'docx').lower()
+    save_dir = request.args.get('save_dir') or (request.json.get('save_dir') if request.is_json and request.json else None)
     clean_name = "".join(c for c in detail['employee_name'] if c.isalnum() or c in (" ", "_", "-")).strip().replace(" ", "_")
-    filename = f"timesheet_{clean_name}_{detail['month']:02d}_{detail['year']}.docx"
-    output_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'exports', filename)
-    os.makedirs(os.path.dirname(output_path), exist_ok=True)
 
-    docx_exporter.generate_docx(
-        employee_name=detail['employee_name'],
-        personal_id=detail['personal_id'],
-        city_name=detail['city_name'],
-        year=detail['year'],
-        month=detail['month'],
-        daily_entries=detail['entries'],
-        target_hours=detail['target_hours'],
-        output_path=output_path
+    if save_dir and os.path.isdir(save_dir):
+        out_dir = save_dir
+    else:
+        out_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'exports')
+    os.makedirs(out_dir, exist_ok=True)
+
+    if export_format == 'pdf':
+        filename = f"timesheet_{clean_name}_{detail['month']:02d}_{detail['year']}.pdf"
+        output_path = os.path.join(out_dir, filename)
+
+        docx_exporter.generate_pdf(
+            employee_name=detail['employee_name'],
+            personal_id=detail['personal_id'],
+            city_name=detail['city_name'],
+            year=detail['year'],
+            month=detail['month'],
+            daily_entries=detail['entries'],
+            target_hours=detail['target_hours'],
+            output_path=output_path
+        )
+
+        return send_file(output_path, as_attachment=True, download_name=filename, mimetype='application/pdf')
+    else:
+        filename = f"timesheet_{clean_name}_{detail['month']:02d}_{detail['year']}.docx"
+        output_path = os.path.join(out_dir, filename)
+
+        docx_exporter.generate_docx(
+            employee_name=detail['employee_name'],
+            personal_id=detail['personal_id'],
+            city_name=detail['city_name'],
+            year=detail['year'],
+            month=detail['month'],
+            daily_entries=detail['entries'],
+            target_hours=detail['target_hours'],
+            output_path=output_path
+        )
+
+        return send_file(output_path, as_attachment=True, download_name=filename)
+
+
+# ==============================================================================
+# Simple Generator API
+# ==============================================================================
+
+@app.route('/api/simple-generator/generate', methods=['POST'])
+def api_simple_generate():
+    data = request.json
+    target_hours = float(data.get('target_hours', 120.0))
+    city_start = data.get('city_start_time', '08:00')
+    city_end = data.get('city_end_time', '22:00')
+    year = int(data.get('year', datetime.now().year))
+    month = int(data.get('month', datetime.now().month))
+    allow_morning = bool(data.get('allow_morning', True))
+    allow_afternoon = bool(data.get('allow_afternoon', True))
+    allow_evening = bool(data.get('allow_evening', True))
+
+    result = simple_solver.greedy_solve(
+        target_hours=target_hours,
+        city_start_str=city_start,
+        city_end_str=city_end,
+        year=year,
+        month=month,
+        allow_morning=allow_morning,
+        allow_afternoon=allow_afternoon,
+        allow_evening=allow_evening
     )
+    add_log('INFO', f"Simple Generator created schedule: {result['scheduled_hours']}h ({result['work_days_count']} days)")
+    return jsonify(result)
 
-    return send_file(output_path, as_attachment=True, download_name=filename)
+@app.route('/api/simple-generator/export', methods=['POST'])
+def api_simple_export():
+    data = request.json
+    employee_name = data.get('employee_name', 'Driver')
+    personal_id = data.get('personal_id', '0000')
+    city_name = data.get('city_name', 'City')
+    year = int(data.get('year', datetime.now().year))
+    month = int(data.get('month', datetime.now().month))
+    target_hours = float(data.get('target_hours', 120.0))
+    daily_entries = data.get('daily_entries', [])
+    fmt = data.get('format', 'docx').lower()
+    save_dir = data.get('save_dir')
+
+    clean_name = "".join(c for c in employee_name if c.isalnum() or c in (" ", "_", "-")).strip().replace(" ", "_")
+
+    if save_dir and os.path.isdir(save_dir):
+        out_dir = save_dir
+    else:
+        out_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'exports')
+    os.makedirs(out_dir, exist_ok=True)
+
+    if fmt == 'pdf':
+        filename = f"timesheet_{clean_name}_{month:02d}_{year}.pdf"
+        output_path = os.path.join(out_dir, filename)
+        docx_exporter.generate_pdf(employee_name, personal_id, city_name, year, month, daily_entries, target_hours, output_path)
+        return send_file(output_path, as_attachment=True, download_name=filename, mimetype='application/pdf')
+    else:
+        filename = f"timesheet_{clean_name}_{month:02d}_{year}.docx"
+        output_path = os.path.join(out_dir, filename)
+        docx_exporter.generate_docx(employee_name, personal_id, city_name, year, month, daily_entries, target_hours, output_path)
+        return send_file(output_path, as_attachment=True, download_name=filename)
 
 
 # ==============================================================================
