@@ -4,15 +4,18 @@ Wraps existing db/models.py, solver/sat_solver.py, and exporter/docx_exporter.py
 with a JSON API and serves the web frontend from web/.
 """
 
+import io
 import os
 import sys
 import json
+import uuid
 import calendar
+import secrets
 import sqlite3
 import webbrowser
 import threading
 from datetime import datetime
-from flask import Flask, request, jsonify, send_from_directory, send_file
+from flask import Flask, request, jsonify, send_from_directory, send_file, Response
 
 # Ensure project root is on the path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -45,6 +48,20 @@ else:
 WEB_DIR = os.path.join(BASE_DIR, 'web')
 app = Flask(__name__, static_folder=WEB_DIR, static_url_path='')
 
+# Per-session token required on all mutating /api routes. It is embedded in the
+# served index.html so only pages delivered by this server can modify data.
+AUTH_TOKEN = secrets.token_urlsafe(32)
+
+
+@app.before_request
+def check_auth_token():
+    if request.method in ('GET', 'HEAD', 'OPTIONS') or not request.path.startswith('/api/'):
+        return None
+    token = request.headers.get('X-Auth-Token', '')
+    if not secrets.compare_digest(token, AUTH_TOKEN):
+        return jsonify({'error': 'Unauthorized: invalid or missing auth token.'}), 401
+    return None
+
 
 # ==============================================================================
 # Static file serving
@@ -52,7 +69,10 @@ app = Flask(__name__, static_folder=WEB_DIR, static_url_path='')
 
 @app.route('/')
 def serve_index():
-    return send_from_directory(app.static_folder, 'index.html')
+    with open(os.path.join(app.static_folder, 'index.html'), 'r', encoding='utf-8') as f:
+        html = f.read()
+    html = html.replace('__AUTH_TOKEN__', AUTH_TOKEN)
+    return Response(html, mimetype='text/html')
 
 @app.route('/<path:path>')
 def serve_static(path):
@@ -70,12 +90,15 @@ def serve_static(path):
 def api_get_cities():
     cities = models.get_cities()
     all_drivers = models.get_employees()
+    all_ts = models.get_timesheets()
+    # Driver IDs with timesheets per city (single query instead of one per city)
+    ts_drivers_by_city = {}
+    for t in all_ts:
+        ts_drivers_by_city.setdefault(t['city_id'], set()).add(t['employee_id'])
     # Enrich with driver count (drivers explicitly assigned to city or having timesheets in city)
     for city in cities:
         bound_driver_ids = set(d['id'] for d in all_drivers if d.get('city_id') == city['id'])
-        ts = models.get_timesheets(city_id=city['id'])
-        ts_driver_ids = set(t['employee_id'] for t in ts)
-        city['driver_count'] = len(bound_driver_ids | ts_driver_ids)
+        city['driver_count'] = len(bound_driver_ids | ts_drivers_by_city.get(city['id'], set()))
     return jsonify(cities)
 
 @app.route('/api/cities/<int:city_id>/drivers', methods=['GET'])
@@ -210,11 +233,8 @@ def api_get_timesheets():
     year = request.args.get('year', type=int)
     month = request.args.get('month', type=int)
     status = request.args.get('status')
+    # get_timesheets already returns actual_hours via a SQL aggregate
     ts = models.get_timesheets(city_id=city_id, year=year, month=month, status=status)
-    # Enrich with actual hours
-    for t in ts:
-        detail = models.get_timesheet_with_entries(t['id'])
-        t['actual_hours'] = sum(e['hours_worked'] for e in detail.get('entries', []))
     return jsonify(ts)
 
 @app.route('/api/timesheets', methods=['POST'])
@@ -294,6 +314,9 @@ def api_save_entries(ts_id):
             msg += " (and locked it)"
         add_log('INFO', msg)
         return jsonify({'success': True})
+    except ValueError as e:
+        add_log('WARNING', f"Rejected manual entries for timesheet ID {ts_id}: {str(e)}")
+        return jsonify({'error': str(e)}), 400
     except Exception as e:
         add_log('ERROR', f"Failed to save manual entries: {str(e)}")
         return jsonify({'error': str(e)}), 500
@@ -351,13 +374,19 @@ def api_solve():
     solve_ids = set(timesheet_ids)
     drivers = []
     locked_entries = {}
+    locked_ts_ids = set()  # every ts whose entries also feed locked_coverage
 
-    # Capture pre-solve state for "before vs after" comparison
+    # Capture pre-solve state for "before vs after" comparison and remark preservation
     pre_solve_state = {}
+    existing_remarks = {}
     for ts_id in timesheet_ids:
         detail = models.get_timesheet_with_entries(ts_id)
         if detail:
             pre_solve_state[ts_id] = sum(1 for e in detail.get('entries', []) if e['hours_worked'] > 0)
+            existing_remarks[ts_id] = {
+                e['work_date']: e.get('remarks', '') or ''
+                for e in detail.get('entries', [])
+            }
 
     for ts in all_ts:
         ts_detail = models.get_timesheet_with_entries(ts['id'])
@@ -369,6 +398,7 @@ def api_solve():
             if ts['status'] == 'Finalized' or ts['is_distribution_locked']:
                 # Finalized/locked timesheets become background constraints
                 locked_entries[ts['employee_id']] = ts_detail.get('entries', [])
+                locked_ts_ids.add(ts['id'])
             else:
                 drivers.append(sat_solver.DriverSpec(
                     employee_id=ts['employee_id'],
@@ -379,6 +409,7 @@ def api_solve():
             # Background locked timesheet (not being solved)
             entries = ts_detail.get('entries', [])
             if entries:
+                locked_ts_ids.add(ts['id'])
                 if ts['employee_id'] in locked_entries:
                     locked_entries[ts['employee_id']].extend(entries)
                 else:
@@ -395,8 +426,10 @@ def api_solve():
             d_spec.employee_id, year, month, city_id
         )
 
-    # Get existing coverage (from timesheets NOT in our solve set and NOT locked)
-    exclude_ids = list(solve_ids)
+    # Get existing coverage from timesheets that are neither being solved nor
+    # already loaded as locked background — otherwise their shifts would be
+    # double-counted in the solver's baseline coverage objectives.
+    exclude_ids = list(solve_ids | locked_ts_ids)
     existing_coverage = models.get_city_coverage(city_id, year, month, exclude_timesheet_ids=exclude_ids)
 
     mode = 'batch' if len(drivers) > 1 else 'incremental'
@@ -430,8 +463,14 @@ def api_solve():
     for ts in all_ts:
         if ts['employee_id'] in result.schedules:
             schedule = result.schedules[ts['employee_id']]
-            # Only save if this is one of the IDs we were asked to solve
+            # Only save if this is one of the IDs we were asked to solve.
+            # Locked/Finalized timesheets are reconstructed as background
+            # constraints only — writing them back would wipe manual edits
+            # and remarks on approved records.
             if ts['id'] in solve_ids and ts['id'] != redistribute_around_id:
+                if ts['status'] == 'Finalized' or ts['is_distribution_locked']:
+                    continue
+                remarks_by_date = existing_remarks.get(ts['id'], {})
                 entries = []
                 for day_entry in schedule:
                     work_date = f"{year}-{month:02d}-{day_entry.day:02d}"
@@ -442,7 +481,7 @@ def api_solve():
                         'start_time': day_entry.start_time,
                         'end_time': day_entry.end_time,
                         'break_duration': break_str,
-                        'remarks': ''
+                        'remarks': remarks_by_date.get(work_date, '')
                     })
                 models.save_daily_entries(ts['id'], entries)
 
@@ -467,6 +506,34 @@ def api_solve():
 # Export API
 # ==============================================================================
 
+def _export_document(generate_fn, stem, ext):
+    """
+    Generates an export document into a uniquely named temp file inside the
+    app's exports/ directory, reads it back, deletes it, and returns an
+    in-memory download response. Unique names prevent concurrent exports of
+    the same driver/month from clobbering each other, and never exposing a
+    client-chosen directory prevents arbitrary filesystem writes.
+    """
+    out_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'exports')
+    os.makedirs(out_dir, exist_ok=True)
+    output_path = os.path.join(out_dir, f"{stem}_{uuid.uuid4().hex[:8]}{ext}")
+    download_name = f"{stem}{ext}"
+
+    generate_fn(output_path)
+
+    with open(output_path, 'rb') as f:
+        data = f.read()
+    try:
+        os.remove(output_path)
+    except OSError:
+        pass
+
+    mimetype = 'application/pdf' if ext == '.pdf' else (
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document')
+    return send_file(io.BytesIO(data), as_attachment=True,
+                     download_name=download_name, mimetype=mimetype)
+
+
 @app.route('/api/timesheets/<int:ts_id>/export', methods=['POST'])
 def api_export_timesheet(ts_id):
     detail = models.get_timesheet_with_entries(ts_id)
@@ -474,20 +541,25 @@ def api_export_timesheet(ts_id):
         return jsonify({'error': 'Timesheet not found.'}), 404
 
     export_format = request.args.get('format', 'docx').lower()
-    save_dir = request.args.get('save_dir') or (request.json.get('save_dir') if request.is_json and request.json else None)
     clean_name = "".join(c for c in detail['employee_name'] if c.isalnum() or c in (" ", "_", "-")).strip().replace(" ", "_")
-
-    if save_dir and os.path.isdir(save_dir):
-        out_dir = save_dir
-    else:
-        out_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'exports')
-    os.makedirs(out_dir, exist_ok=True)
+    stem = f"timesheet_{clean_name}_{detail['month']:02d}_{detail['year']}"
 
     if export_format == 'pdf':
-        filename = f"timesheet_{clean_name}_{detail['month']:02d}_{detail['year']}.pdf"
-        output_path = os.path.join(out_dir, filename)
+        return _export_document(
+            lambda path: docx_exporter.generate_pdf(
+                employee_name=detail['employee_name'],
+                personal_id=detail['personal_id'],
+                city_name=detail['city_name'],
+                year=detail['year'],
+                month=detail['month'],
+                daily_entries=detail['entries'],
+                target_hours=detail['target_hours'],
+                output_path=path
+            ),
+            stem, '.pdf')
 
-        docx_exporter.generate_pdf(
+    return _export_document(
+        lambda path: docx_exporter.generate_docx(
             employee_name=detail['employee_name'],
             personal_id=detail['personal_id'],
             city_name=detail['city_name'],
@@ -495,26 +567,9 @@ def api_export_timesheet(ts_id):
             month=detail['month'],
             daily_entries=detail['entries'],
             target_hours=detail['target_hours'],
-            output_path=output_path
-        )
-
-        return send_file(output_path, as_attachment=True, download_name=filename, mimetype='application/pdf')
-    else:
-        filename = f"timesheet_{clean_name}_{detail['month']:02d}_{detail['year']}.docx"
-        output_path = os.path.join(out_dir, filename)
-
-        docx_exporter.generate_docx(
-            employee_name=detail['employee_name'],
-            personal_id=detail['personal_id'],
-            city_name=detail['city_name'],
-            year=detail['year'],
-            month=detail['month'],
-            daily_entries=detail['entries'],
-            target_hours=detail['target_hours'],
-            output_path=output_path
-        )
-
-        return send_file(output_path, as_attachment=True, download_name=filename)
+            output_path=path
+        ),
+        stem, '.docx')
 
 
 # ==============================================================================
@@ -557,26 +612,18 @@ def api_simple_export():
     target_hours = float(data.get('target_hours', 120.0))
     daily_entries = data.get('daily_entries', [])
     fmt = data.get('format', 'docx').lower()
-    save_dir = data.get('save_dir')
 
     clean_name = "".join(c for c in employee_name if c.isalnum() or c in (" ", "_", "-")).strip().replace(" ", "_")
-
-    if save_dir and os.path.isdir(save_dir):
-        out_dir = save_dir
-    else:
-        out_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'exports')
-    os.makedirs(out_dir, exist_ok=True)
+    stem = f"timesheet_{clean_name}_{month:02d}_{year}"
 
     if fmt == 'pdf':
-        filename = f"timesheet_{clean_name}_{month:02d}_{year}.pdf"
-        output_path = os.path.join(out_dir, filename)
-        docx_exporter.generate_pdf(employee_name, personal_id, city_name, year, month, daily_entries, target_hours, output_path)
-        return send_file(output_path, as_attachment=True, download_name=filename, mimetype='application/pdf')
-    else:
-        filename = f"timesheet_{clean_name}_{month:02d}_{year}.docx"
-        output_path = os.path.join(out_dir, filename)
-        docx_exporter.generate_docx(employee_name, personal_id, city_name, year, month, daily_entries, target_hours, output_path)
-        return send_file(output_path, as_attachment=True, download_name=filename)
+        return _export_document(
+            lambda path: docx_exporter.generate_pdf(employee_name, personal_id, city_name, year, month, daily_entries, target_hours, path),
+            stem, '.pdf')
+
+    return _export_document(
+        lambda path: docx_exporter.generate_docx(employee_name, personal_id, city_name, year, month, daily_entries, target_hours, path),
+        stem, '.docx')
 
 
 # ==============================================================================
@@ -589,13 +636,11 @@ def api_driver_analytics(driver_id):
     timesheets = sorted(timesheets, key=lambda t: (t['year'], t['month']))
     result = []
     for ts in timesheets:
-        detail = models.get_timesheet_with_entries(ts['id'])
-        actual = sum(e['hours_worked'] for e in detail.get('entries', []))
         result.append({
             'label': f"{ts['month']:02d}/{ts['year']}",
             'city': ts['city_name'],
             'target_hours': ts['target_hours'],
-            'actual_hours': actual,
+            'actual_hours': ts.get('actual_hours', 0.0),
             'status': ts['status']
         })
     return jsonify(result)
@@ -653,11 +698,8 @@ def api_dashboard_stats():
     finalized = [t for t in timesheets if t['status'] == 'Finalized']
     draft = [t for t in timesheets if t['status'] == 'Draft']
 
-    # Recent timesheets (last 5)
+    # Recent timesheets (last 5); actual_hours comes from the SQL aggregate
     recent = timesheets[:5]
-    for r in recent:
-        detail = models.get_timesheet_with_entries(r['id'])
-        r['actual_hours'] = sum(e['hours_worked'] for e in detail.get('entries', []))
 
     return jsonify({
         'city_count': len(cities),

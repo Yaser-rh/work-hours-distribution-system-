@@ -4,8 +4,10 @@ from utils.paths import DB_PATH
 def get_connection() -> sqlite3.Connection:
     """
     Returns a sqlite3 connection with foreign keys enabled.
+    A busy timeout prevents spurious 'database is locked' errors when
+    concurrent requests (e.g. a running solve + UI polling) write at once.
     """
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=10)
     conn.execute("PRAGMA foreign_keys = ON")
     return conn
 

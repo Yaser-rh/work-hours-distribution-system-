@@ -40,23 +40,46 @@ def open_browser_url(url="http://127.0.0.1:5000"):
         subprocess.Popen(f'start "" "{url}"', shell=True, creationflags=creationflags)
 
 def kill_port_owner(port=5000):
+    """
+    Force-kills any process listening on `port` — on this dedicated machine
+    that is always a stale instance of this app from a previous launch, so a
+    relaunch always starts fresh on its home port. The port comparison is an
+    exact suffix match on the local address so ':5000' never matches ':50000'.
+    """
     try:
         creationflags = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
         output = subprocess.check_output("netstat -ano", shell=True, creationflags=creationflags).decode()
         pids_to_kill = set()
         current_pid = str(os.getpid())
         for line in output.strip().split('\n'):
-            if "LISTENING" in line and f":{port}" in line:
-                parts = line.strip().split()
-                if len(parts) >= 5:
-                    pid = parts[-1]
-                    if pid.isdigit() and pid != "0" and pid != current_pid:
-                        pids_to_kill.add(int(pid))
-        
+            if "LISTENING" not in line:
+                continue
+            parts = line.split()
+            if len(parts) < 5:
+                continue
+            local_address = parts[1]  # e.g. 127.0.0.1:5000 or [::1]:5000
+            if not local_address.endswith(f":{port}"):
+                continue
+            pid = parts[-1]
+            if pid.isdigit() and pid != "0" and pid != current_pid:
+                pids_to_kill.add(int(pid))
+
         for pid in pids_to_kill:
             subprocess.run(f"taskkill /F /PID {pid}", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=creationflags)
     except Exception:
         pass
+
+def find_free_port(start=5000, attempts=10):
+    """Finds a free localhost port starting at `start` so the launcher never
+    has to kill whatever process happens to occupy the default port."""
+    for port in range(start, start + attempts):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            try:
+                s.bind(("127.0.0.1", port))
+                return port
+            except OSError:
+                continue
+    return start
 
 def wait_for_port(host="127.0.0.1", port=5000, timeout=12.0):
     start = time.time()
@@ -211,37 +234,38 @@ class LauncherApp(ctk.CTk):
 
     def run_web_ui(self):
         self.show_web_console_view()
-        
+
         if not self.flask_started:
-            self.set_status_safe("Starting Flask server...", "#3182ce")
-            
+            kill_port_owner()  # clear stale previous instance so we get the home port
+            port = find_free_port()
+            self.set_status_safe(f"Starting Flask server on port {port}...", "#3182ce")
+
             def run_server():
                 try:
                     from app import app as flask_app, initialize_database
                     initialize_database()
                     import logging
                     logging.getLogger('werkzeug').setLevel(logging.ERROR)
-                    flask_app.run(host='127.0.0.1', port=5000, debug=False, use_reloader=False)
+                    flask_app.run(host='127.0.0.1', port=port, debug=False, use_reloader=False)
                 except Exception as e:
                     self.server_error = str(e)
                     self.set_status_safe(f"Server error: {e}", "#e53e3e")
-                    
+
             self.flask_thread = threading.Thread(target=run_server, daemon=True)
             self.flask_thread.start()
             self.flask_started = True
-            
-        def check_ready_and_open():
-            if wait_for_port(port=5000, timeout=12.0):
-                self.set_status_safe("Flask Server running at http://127.0.0.1:5000", "#38a169")
-                open_browser_url("http://127.0.0.1:5000")
-            else:
-                if not self.server_error:
-                    self.set_status_safe("Server error: Timed out waiting for port 5000.", "#e53e3e")
-                    
-        threading.Thread(target=check_ready_and_open, daemon=True).start()
+
+            def check_ready_and_open():
+                if wait_for_port(port=port, timeout=12.0):
+                    self.set_status_safe(f"Flask Server running at http://127.0.0.1:{port}", "#38a169")
+                    open_browser_url(f"http://127.0.0.1:{port}")
+                else:
+                    if not self.server_error:
+                        self.set_status_safe(f"Server error: Timed out waiting for port {port}.", "#e53e3e")
+
+            threading.Thread(target=check_ready_and_open, daemon=True).start()
 
 if __name__ == "__main__":
-    kill_port_owner(5000)
     app = LauncherApp()
     app.protocol("WM_DELETE_WINDOW", lambda: os._exit(0))
     app.mainloop()

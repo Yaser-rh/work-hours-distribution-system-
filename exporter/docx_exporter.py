@@ -1,9 +1,14 @@
 import os
+import threading
 from datetime import datetime
 from docx import Document
 from docx.shared import Inches, Pt
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.enum.table import WD_TABLE_ALIGNMENT, WD_ALIGN_VERTICAL
+
+# Word COM automation is not safe to drive concurrently from multiple threads;
+# all conversions are serialized through this lock.
+_word_com_lock = threading.Lock()
 
 def format_hours_german(hours: float) -> str:
     """
@@ -174,10 +179,11 @@ def generate_docx(
     doc.save(output_path)
     return os.path.abspath(output_path)
 
-def convert_docx_to_pdf(docx_path: str, pdf_path: str = None) -> str:
+def convert_docx_to_pdf(docx_path: str, pdf_path: str = None):
     """
     Converts a .docx file to a .pdf file.
-    First attempts Word COM object (win32com) on Windows.
+    Attempts Word COM automation (win32com) on Windows, serialized by a lock.
+    Returns the PDF path on success, or None if conversion failed.
     """
     if pdf_path is None:
         pdf_path = os.path.splitext(docx_path)[0] + ".pdf"
@@ -188,19 +194,18 @@ def convert_docx_to_pdf(docx_path: str, pdf_path: str = None) -> str:
     # 1. Try win32com (MS Word COM)
     try:
         import win32com.client
-        word = win32com.client.Dispatch("Word.Application")
-        word.Visible = False
-        try:
-            doc = word.Documents.Open(abs_docx)
-            doc.SaveAs(abs_pdf, FileFormat=17)  # 17 = wdFormatPDF
-            doc.Close()
-            return abs_pdf
-        finally:
-            word.Quit()
+        with _word_com_lock:
+            word = win32com.client.Dispatch("Word.Application")
+            word.Visible = False
+            try:
+                doc = word.Documents.Open(abs_docx)
+                doc.SaveAs(abs_pdf, FileFormat=17)  # 17 = wdFormatPDF
+                doc.Close()
+            finally:
+                word.Quit()
+        return abs_pdf
     except Exception:
-        pass
-
-    return abs_pdf
+        return None
 
 def generate_pdf(
     employee_name: str,

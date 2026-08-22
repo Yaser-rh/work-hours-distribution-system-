@@ -375,11 +375,27 @@ App.registerPage('timesheets', {
     },
 
     async saveInlineEdit(tsId, fullTs, idx, workDate) {
-        const start = document.getElementById('editStart').value.trim();
-        const end = document.getElementById('editEnd').value.trim();
+        let start = document.getElementById('editStart').value.trim();
+        let end = document.getElementById('editEnd').value.trim();
         const brk = document.getElementById('editBreak').value.trim();
-        const hours = parseFloat(document.getElementById('editHours').value) || 0;
         const remarks = document.getElementById('editRemarks').value.trim();
+        const hours = App.validateHoursInput(document.getElementById('editHours').value, 0, 24);
+        if (hours === null) {
+            App.toast('Hours must be a number between 0 and 24.', 'error');
+            return;
+        }
+        if (hours > 0) {
+            start = App.normalizeTimeInput(start);
+            end = App.normalizeTimeInput(end);
+            if (!start || !end) {
+                App.toast('Start/end must be valid times, e.g. 08:00 (typing "900" auto-becomes "9:00").', 'error');
+                return;
+            }
+            if (start >= end) {
+                App.toast('End time must be after start time.', 'error');
+                return;
+            }
+        }
 
         // Build updated entries array
         const entries = fullTs.entries.map((e, i) => {
@@ -606,15 +622,32 @@ App.registerPage('timesheets', {
         const rows = document.querySelectorAll('#scheduleBody tr');
         const entries = [];
 
-        rows.forEach(row => {
+        for (const row of rows) {
             const idx = parseInt(row.dataset.idx);
-            const start = row.querySelector('.edit-start').value.trim();
-            const end = row.querySelector('.edit-end').value.trim();
+            let start = row.querySelector('.edit-start').value.trim();
+            let end = row.querySelector('.edit-end').value.trim();
             const brk = row.querySelector('.edit-break').value.trim();
-            const hoursVal = row.querySelector('.edit-hours').value;
-            const hours = parseFloat(hoursVal) || 0;
             const remarks = row.querySelector('.edit-remarks').value.trim();
-            
+            const hours = App.validateHoursInput(row.querySelector('.edit-hours').value, 0, 24);
+            const rowDate = this.activeTsDetail.entries[idx]?.work_date ?? `row ${idx + 1}`;
+
+            if (hours === null) {
+                App.toast(`Hours for ${rowDate} must be a number between 0 and 24.`, 'error');
+                return;
+            }
+            if (hours > 0) {
+                start = App.normalizeTimeInput(start);
+                end = App.normalizeTimeInput(end);
+                if (!start || !end) {
+                    App.toast(`Start/end for ${rowDate} must be valid times, e.g. 08:00.`, 'error');
+                    return;
+                }
+                if (start >= end) {
+                    App.toast(`End time must be after start time on ${rowDate}.`, 'error');
+                    return;
+                }
+            }
+
             const originalEntry = this.activeTsDetail.entries[idx];
 
             entries.push({
@@ -625,7 +658,7 @@ App.registerPage('timesheets', {
                 break_duration: hours > 0 ? brk : '',
                 remarks: remarks
             });
-        });
+        }
 
         // Show lock/redistribute choice
         App.openModal(`

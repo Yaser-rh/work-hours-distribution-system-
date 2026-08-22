@@ -27,6 +27,23 @@ def clock_to_units(time_str: str) -> int:
         return 0
 
 
+def parse_work_date(work_date) -> Optional[int]:
+    """
+    Parses a work_date string ('YYYY-MM-DD' or 'DD.MM.YYYY') and returns the
+    day-of-month, or None for empty/malformed values. Never raises.
+    """
+    if not work_date:
+        return None
+    try:
+        if '-' in work_date:
+            return int(str(work_date).split('-')[2])
+        elif '.' in work_date:
+            return int(str(work_date).split('.')[0])
+    except (ValueError, IndexError):
+        return None
+    return None
+
+
 # ==============================================================================
 # CITY CRUD Operations
 # ==============================================================================
@@ -283,10 +300,16 @@ def get_timesheets(city_id: Optional[int] = None,
     query = """
         SELECT t.id, t.employee_id, e.name AS employee_name, e.personal_id,
                t.city_id, c.name AS city_name, t.year, t.month, t.target_hours,
-               t.status, t.is_distribution_locked
+               t.status, t.is_distribution_locked,
+               COALESCE(agg.actual_hours, 0.0) AS actual_hours
         FROM timesheet t
         JOIN employee e ON t.employee_id = e.id
         JOIN city c ON t.city_id = c.id
+        LEFT JOIN (
+            SELECT timesheet_id, SUM(hours_worked) AS actual_hours
+            FROM daily_entry
+            GROUP BY timesheet_id
+        ) agg ON agg.timesheet_id = t.id
         WHERE 1=1
     """
     params = []
@@ -326,6 +349,7 @@ def get_timesheets(city_id: Optional[int] = None,
                 "target_hours": r[8],
                 "status": r[9],
                 "is_distribution_locked": bool(r[10]),
+                "actual_hours": r[11],
             }
             for r in rows
         ]
@@ -394,7 +418,25 @@ def get_timesheet_with_entries(timesheet_id: int) -> Dict[str, Any]:
 def save_daily_entries(timesheet_id: int, entries: List[Dict[str, Any]]) -> None:
     """
     Replaces all daily entries for a timesheet in a single transaction.
+    Raises ValueError if any entry has a malformed work_date or an invalid
+    hours value, so bad data is rejected at the write boundary instead of
+    crashing solver/coverage queries later.
     """
+    for entry in entries:
+        work_date = entry.get("work_date")
+        if parse_work_date(work_date) is None:
+            raise ValueError(f"Invalid work_date for entry: {work_date!r} (expected 'YYYY-MM-DD' or 'DD.MM.YYYY')")
+        hours = entry.get("hours_worked", 0.0)
+        if hours is None:
+            hours = 0.0
+        try:
+            hours = float(hours)
+        except (TypeError, ValueError):
+            raise ValueError(f"Invalid hours_worked for entry {work_date}: {entry.get('hours_worked')!r}")
+        if hours < 0 or hours > 24:
+            raise ValueError(f"hours_worked out of range (0-24) for entry {work_date}: {hours}")
+        entry["hours_worked"] = hours
+
     conn = get_connection()
     try:
         with conn:
@@ -500,11 +542,7 @@ def get_previous_month_boundary(employee_id: int, year: int, month: int) -> List
 
     active_days = set()
     for work_date, hours in rows:
-        day = None
-        if '-' in work_date:
-            day = int(work_date.split('-')[2])
-        elif '.' in work_date:
-            day = int(work_date.split('.')[0])
+        day = parse_work_date(work_date)
         if day is not None:
             active_days.add(day)
 
@@ -533,11 +571,7 @@ def get_cross_city_active_days(employee_id: int, year: int, month: int,
         conn.close()
 
     for work_date, hours in rows:
-        day = None
-        if '-' in work_date:
-            day = int(work_date.split('-')[2])
-        elif '.' in work_date:
-            day = int(work_date.split('.')[0])
+        day = parse_work_date(work_date)
         if day is not None and day in result:
             result[day] = 1
 
@@ -576,11 +610,7 @@ def get_city_coverage(city_id: int, year: int, month: int,
     for work_date, start_time, end_time in rows:
         if not start_time or not end_time:
             continue
-        day = None
-        if '-' in work_date:
-            day = int(work_date.split('-')[2])
-        elif '.' in work_date:
-            day = int(work_date.split('.')[0])
+        day = parse_work_date(work_date)
 
         if day is not None and day in coverage:
             start_slot = clock_to_units(start_time)
@@ -619,17 +649,25 @@ def restore_database(backup_path: str) -> None:
     and replaces the current database file.
     Raises ValueError on invalid database, IOError on file copy failure.
     """
-    # 1. Validate backup is a valid SQLite DB
+    # 1. Validate backup is a valid SQLite DB with the expected schema
     if not os.path.exists(backup_path):
         raise ValueError(f"Backup file does not exist: {backup_path}")
+    required_tables = {"city", "employee", "timesheet", "daily_entry"}
     try:
         conn = sqlite3.connect(backup_path)
         cursor = conn.cursor()
         cursor.execute("PRAGMA integrity_check")
         result = cursor.fetchone()
-        conn.close()
         if not result or result[0] != "ok":
             raise ValueError("Integrity check failed: database file is corrupted or invalid.")
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        tables = {row[0] for row in cursor.fetchall()}
+        missing = required_tables - tables
+        if missing:
+            raise ValueError(f"Backup is missing required tables: {', '.join(sorted(missing))}")
+        conn.close()
+    except ValueError:
+        raise
     except Exception as e:
         raise ValueError(f"Invalid database backup file: {str(e)}")
 

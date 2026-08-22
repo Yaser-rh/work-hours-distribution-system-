@@ -52,7 +52,8 @@ const App = {
             item.classList.toggle('active', item.dataset.page === page);
         });
 
-        // Update breadcrumb
+        // Update breadcrumb (whitelist only — never interpolate the raw hash,
+        // which would allow script injection via the URL fragment)
         const names = {
             dashboard: 'Dashboard',
             cities: 'Cities',
@@ -64,7 +65,7 @@ const App = {
             'user-guide': 'User Guide'
         };
         document.getElementById('breadcrumb').innerHTML =
-            `<span class="breadcrumb-item">${names[page] || page}</span>`;
+            `<span class="breadcrumb-item">${names[page] || 'Dashboard'}</span>`;
 
         // Render page
         const container = document.getElementById('pageContainer');
@@ -239,6 +240,8 @@ const App = {
         }
 
         const fetchOpts = { method, headers: {} };
+        // Per-session token required by the server on all mutating routes
+        if (window.AUTH_TOKEN) fetchOpts.headers['X-Auth-Token'] = window.AUTH_TOKEN;
         if (body) {
             fetchOpts.headers['Content-Type'] = 'application/json';
             fetchOpts.body = JSON.stringify(body);
@@ -255,6 +258,36 @@ const App = {
         // Handle file downloads
         if (!res.ok) throw new Error(`Request failed: ${res.status}`);
         return res;
+    },
+
+    // ---- Input normalization helpers ----
+    // Interprets loose time input and returns a valid "HH:MM" string, or null.
+    // Accepts typos: "900" -> "09:00", "0930" -> "09:30", "9,30"/"9.30" -> "09:30".
+    normalizeTimeInput(raw) {
+        const s = String(raw ?? '').trim().replace(/[.,]/g, ':').replace(/[^0-9:]/g, '');
+        if (!s) return null;
+        let h, m = '00';
+        const idx = s.indexOf(':');
+        if (idx === -1) {
+            if (s.length <= 2) h = s;                                  // "9" / "14" -> top of the hour
+            else if (s.length === 3) { h = s.slice(0, 1); m = s.slice(1); }  // "930" -> 9:30
+            else if (s.length === 4) { h = s.slice(0, 2); m = s.slice(2); }  // "0930" -> 09:30
+            else return null;
+        } else {
+            h = s.slice(0, idx);
+            m = s.slice(idx + 1) || '00';
+        }
+        if (h === '' || h.length > 2 || m.length > 2) return null;
+        const hh = parseInt(h, 10), mm = parseInt(m, 10);
+        if (isNaN(hh) || isNaN(mm) || hh < 0 || hh > 23 || mm < 0 || mm > 59) return null;
+        return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
+    },
+
+    // Returns the parsed number if it is numeric and within [min, max], else null.
+    validateHoursInput(raw, min, max) {
+        const v = parseFloat(String(raw ?? '').replace(',', '.'));
+        if (isNaN(v) || v < min || v > max) return null;
+        return v;
     },
 
     // ---- Modal ----

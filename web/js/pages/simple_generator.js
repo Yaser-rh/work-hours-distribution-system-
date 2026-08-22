@@ -108,12 +108,26 @@ App.registerPage('simple-generator', {
 
     async generate() {
         const btn = document.getElementById('sgGenerateBtn');
+
+        const targetHours = App.validateHoursInput(document.getElementById('sgTargetHours').value, 1, 240);
+        if (targetHours === null) {
+            App.toast('Target hours must be a number between 1 and 240.', 'error');
+            return;
+        }
+        const startTime = App.normalizeTimeInput(document.getElementById('sgStartTime').value);
+        const endTime = App.normalizeTimeInput(document.getElementById('sgEndTime').value);
+        if (!startTime || !endTime) {
+            App.toast('Start/end times must be valid, e.g. 08:00 (typing "900" auto-becomes "9:00").', 'error');
+            return;
+        }
+        if (startTime >= endTime) {
+            App.toast('End time must be after start time (overnight windows are not supported).', 'error');
+            return;
+        }
+
         if (btn) { btn.disabled = true; btn.textContent = '⏳ Generating...'; }
 
         try {
-            const targetHours = parseFloat(document.getElementById('sgTargetHours').value) || 120.0;
-            const startTime = document.getElementById('sgStartTime').value || '08:00';
-            const endTime = document.getElementById('sgEndTime').value || '22:00';
             const year = parseInt(document.getElementById('sgYear').value);
             const month = parseInt(document.getElementById('sgMonth').value);
             const allowMorning = document.getElementById('sgAllowMorning').checked;

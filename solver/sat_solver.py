@@ -47,6 +47,23 @@ def units_to_clock(units: int) -> str:
     return f"{h:02d}:{m:02d}"
 
 
+def _parse_day(work_date) -> Optional[int]:
+    """
+    Parses 'YYYY-MM-DD' or 'DD.MM.YYYY' into a day-of-month, or None.
+    Never raises — malformed stored data must not crash the solver.
+    """
+    if not work_date:
+        return None
+    try:
+        if '-' in work_date:
+            return int(str(work_date).split('-')[2])
+        elif '.' in work_date:
+            return int(str(work_date).split('.')[0])
+    except (ValueError, IndexError):
+        return None
+    return None
+
+
 # ==============================================================================
 # Dataclasses
 # ==============================================================================
@@ -105,13 +122,9 @@ def solve(solver_input: SolverInput, timeout: float = 10.0) -> SolverResult:
         # Map existing entries by day
         entries_by_day = {}
         for entry in entries:
-            work_date = entry.get("work_date", "")
-            day = 1
-            if '-' in work_date:
-                day = int(work_date.split('-')[2])
-            elif '.' in work_date:
-                day = int(work_date.split('.')[0])
-            entries_by_day[day] = entry
+            day = _parse_day(entry.get("work_date", ""))
+            if day is not None:
+                entries_by_day[day] = entry
 
         driver_schedule = []
         for day in range(1, solver_input.num_days + 1):
@@ -163,13 +176,8 @@ def solve(solver_input: SolverInput, timeout: float = 10.0) -> SolverResult:
     }
     for emp_id, entries in solver_input.locked_entries.items():
         for entry in entries:
-            work_date = entry.get("work_date", "")
-            day = None
-            if '-' in work_date:
-                day = int(work_date.split('-')[2])
-            elif '.' in work_date:
-                day = int(work_date.split('.')[0])
-            
+            day = _parse_day(entry.get("work_date", ""))
+
             if day is not None and day in locked_coverage:
                 st = entry.get("start_time", "")
                 et = entry.get("end_time", "")
@@ -208,14 +216,23 @@ def solve(solver_input: SolverInput, timeout: float = 10.0) -> SolverResult:
         )
 
     # ==============================================================================
-    # Phase B: Nearest Feasible Solve
+    # Phase B: Nearest Feasible Solve (budgeted with the time Phase A consumed)
     # ==============================================================================
+    remaining_budget = timeout - (time.perf_counter() - start_time_perf)
+    if remaining_budget < 1.0:
+        return SolverResult(
+            status='failed',
+            schedules={},
+            target_deviation=0.0,
+            solve_time_seconds=time.perf_counter() - start_time_perf
+        )
+
     model_b = cp_model.CpModel()
     vars_b = _build_solver_vars_and_constraints(model_b, solver_input, locked_coverage, exact=False)
     _apply_hints(model_b, vars_b, greedy_hints, solver_input)
-    
+
     solver_b = cp_model.CpSolver()
-    solver_b.parameters.max_time_in_seconds = timeout
+    solver_b.parameters.max_time_in_seconds = remaining_budget
     solver_b.parameters.num_search_workers = 8
     solver_b.parameters.relative_gap_limit = 0.02
     
